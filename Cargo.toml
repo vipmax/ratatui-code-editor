@@ -1,0 +1,11 @@
+[package]
+name = "ts-editor-ratatui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+crossterm = "0.29"
+ratatui = "0.29"
+ropey = "1.6"
+unicode-width = "0.2.0"
