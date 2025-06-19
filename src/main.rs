@@ -17,36 +17,43 @@ fn main() -> anyhow::Result<()> {
     execute!(stdout(), EnterAlternateScreen)?;
     
     let backend = CrosstermBackend::new(stdout());
-    let mut term = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(backend)?;
     
-    let content = std::fs::read_to_string("test.rs")?;
+    let filename = "test.rs";
+    
+    let content = std::fs::read_to_string(filename)?;
 
-    let mut editor = Editor::new("main.rs", &content);
+    let mut editor = Editor::new(filename, &content);
 
-    term.draw(|f| {
+    terminal.draw(|f| {
         f.render_widget(&editor, f.area());
     })?;
 
     loop {
         if event::poll(std::time::Duration::from_millis(100))? {
-            let event = event::read()?;
-
-            if let Event::Key(key) = event {
-                match key.code {
-                    KeyCode::Esc => break,
-                    _ => {
-                        editor.input(key, term.size()?.height as usize);
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.code == KeyCode::Esc {
+                        break;
+                    } else {
+                        editor.input(key, terminal.size()?.height as usize);
                     }
                 }
+                Event::Resize(new_width, new_height) => {
 
-                term.draw(|f| {
-                    f.render_widget(&editor, f.area());
-                })?;
+                }
+                _ => {}
             }
+
+            terminal.draw(|f| {
+                f.render_widget(&editor, f.area());
+            })?;
         }
     }
+    
+    // editor.input(key, term.size()?.height as usize);
 
     disable_raw_mode()?;
-    execute!(term.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     Ok(())
 }
