@@ -1,2 +1,4 @@
 /target
 test.rs
+test/
+.DS_Store
