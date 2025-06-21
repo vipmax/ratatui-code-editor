@@ -1,41 +1,55 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{
+    KeyEvent, MouseEvent, MouseEventKind, MouseButton
+    };
 use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::{prelude::*, widgets::Widget};
 use std::collections::HashMap;
 use unicode_width::UnicodeWidthChar;
+use ratatui::{Terminal, backend::CrosstermBackend};
+use std::io::Stdout;
 
 use crate::code::Code;
+
+type Theme = HashMap<String, Style>;
 
 pub struct Editor {
     pub name: String,
     pub code: Code,
     pub cursor: usize,
     pub offset_y: usize,
+    pub width: usize,
+    pub height: usize,
+    theme: Theme,
 }
 
 impl Editor {
-    pub fn new(name: &str, lang: &str, text: &str) -> Self {
+    /// Create a new editor instance, 
+    /// with the given name, language, text, width, and height.
+    pub fn new(
+        name: &str, lang: &str, text: &str, w: usize, h: usize,
+        theme: Vec<(&str, &str)>,
+    ) -> Self {
         let code = Code::new(text, lang)
             .or_else(|_| Code::new(text, "text"))
             .unwrap();
+        
+        let theme = Self::build_theme(&theme);
 
         Self {
             name: name.to_string(),
             code,
             cursor: 0,
             offset_y: 0,
+            width: w,
+            height: h,
+            theme
         }
     }
-
-    fn cursor_pos(&self) -> (usize, usize) {
-        let row = self.code.content.char_to_line(self.cursor);
-        let line_start = self.code.content.line_to_char(row);
-        let col = self.cursor - line_start;
-        (row, col)
-    }
-
-    pub fn input(&mut self, key: KeyEvent, area_height: usize) {
+    
+    pub fn input(
+        &mut self, key: KeyEvent
+    ) -> anyhow::Result<()> {
         use crossterm::event::KeyCode::*;
 
         match key.code {
@@ -48,15 +62,47 @@ impl Editor {
             Char(c) => self.insert_text(&c.to_string()),
             _ => {}
         }
-
-        self.scroll_to_cursor(area_height);
+        
+        self.scroll_to_cursor();
+        Ok(())
+    }
+    
+    pub(crate) fn mouse(
+        &mut self, mouse: MouseEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>
+    ) -> anyhow::Result<()> {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                self.scroll_up();
+            }
+            MouseEventKind::ScrollDown => {
+                self.scroll_down(terminal.size()?.height as usize);
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                let area = terminal.get_frame().area();
+                self.click(mouse.column, mouse.row, area);
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
-    fn scroll_to_cursor(&mut self, area_height: usize) {
-        let (cursor_row, _) = self.cursor_pos();
+    pub(crate) fn resize(&mut self, w: u16, h: u16) {
+        self.width = w as usize;
+        self.height = h as usize;
+    }
+    
+    fn position(&self) -> (usize, usize) {
+        let row = self.code.content.char_to_line(self.cursor);
+        let line_start = self.code.content.line_to_char(row);
+        let col = self.cursor - line_start;
+        (row, col)
+    }
 
-        if cursor_row >= self.offset_y + area_height {
-            self.offset_y = cursor_row - area_height + 1;
+    fn scroll_to_cursor(&mut self) {
+        let (cursor_row, _) = self.position();
+
+        if cursor_row >= self.offset_y + self.height {
+            self.offset_y = cursor_row - self.height + 1;
         } else if cursor_row < self.offset_y {
             self.offset_y = cursor_row;
         }
@@ -75,7 +121,7 @@ impl Editor {
     }
 
     fn move_up(&mut self) {
-        let (row, col) = self.cursor_pos();
+        let (row, col) = self.position();
         if row > 0 {
             let prev_line_start = self.code.content.line_to_char(row - 1);
             let prev_line_len = self.code.content.line(row - 1).len_chars();
@@ -85,7 +131,7 @@ impl Editor {
     }
 
     fn move_down(&mut self) {
-        let (row, col) = self.cursor_pos();
+        let (row, col) = self.position();
         if row + 1 < self.code.content.len_lines() {
             let next_line_start = self.code.content.line_to_char(row + 1);
             let next_line_len = self.code.content.line(row + 1).len_chars();
@@ -173,46 +219,20 @@ impl Editor {
         self.cursor = line_start + char_idx;
     }
 
-    pub fn hex_to_rgb(hex_color: &str) -> (u8, u8, u8) {
-        let hex = hex_color.trim_start_matches('#');
-        let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
-        let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
-        let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
-        (r, g, b)
+
+    fn build_theme(theme: &Vec<(&str, &str)>) -> HashMap<String, Style> {
+        theme.into_iter()
+            .map(|(name, hex)| {
+                let hex = hex.trim_start_matches('#');
+                let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
+                let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
+                let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
+                
+                (name.to_string(), Style::default().fg(Color::Rgb(r, g, b)))
+            })
+            .collect()
     }
 
-    pub fn build_theme(&self) -> HashMap<String, Style> {
-        [
-            ("identifier", "#A5FCB6"),
-            ("field_identifier", "#A5FCB6"),
-            ("property_identifier", "#A5FCB6"),
-            ("property", "#A5FCB6"),
-            ("string", "#b1fce5"),
-            ("keyword", "#a0a0a0"),
-            ("constant", "#f6c99f"),
-            ("number", "#f6c99f"),
-            ("integer", "#f6c99f"),
-            ("float", "#f6c99f"),
-            ("variable", "#ffffff"),
-            ("variable.builtin", "#ffffff"),
-            ("function", "#f6c99f"),
-            ("function.call", "#f6c99f"),
-            ("method", "#f6c99f"),
-            ("comment", "#585858"),
-            ("namespace", "#f6c99f"),
-            ("type", "#f6c99f"),
-            ("type.builtin", "#f6c99f"),
-            ("tag.attribute", "#c6a5fc"),
-            ("tag", "#c6a5fc"),
-            ("error", "#A5FCB6"),
-        ]
-        .into_iter()
-        .map(|(name, hex)| {
-            let (r, g, b) = Self::hex_to_rgb(hex);
-            (name.to_string(), Style::default().fg(Color::Rgb(r, g, b)))
-        })
-        .collect()
-    }
 }
 
 impl Widget for &Editor {
@@ -222,7 +242,7 @@ impl Widget for &Editor {
         let line_number_digits = max_line_number.to_string().len();
         let line_number_width = line_number_digits + 2; 
 
-        let (cursor_line, cursor_char_col) = self.cursor_pos();
+        let (cursor_line, cursor_char_col) = self.position();
         let mut draw_y = area.top();
 
         let mut max_line_number = 0;
@@ -268,8 +288,7 @@ impl Widget for &Editor {
             let start_line = self.offset_y;
             let end_line = max_line_number + 1;
 
-            let theme = self.build_theme();
-            let allowed = theme.keys().collect::<Vec<_>>();
+            let allowed = self.theme.keys().collect::<Vec<_>>();
 
             let matches = self.code.query_matches(start_line, end_line, &allowed);
 
@@ -279,7 +298,7 @@ impl Widget for &Editor {
                     continue;
                 }
 
-                let style = match theme.get(&capture_name) {
+                let style = match self.theme.get(&capture_name) {
                     Some(s) => *s,
                     None => continue,
                 };
