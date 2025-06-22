@@ -27,4 +27,12 @@ impl Selection {
     pub fn contains(&self, index: usize) -> bool {
         index >= self.start && index < self.end
     }
+    
+    pub fn sorted(&self) -> (usize, usize) {
+        if self.start <= self.end {
+            (self.start, self.end)
+        } else {
+            (self.end, self.start)
+        }
+    }
 }

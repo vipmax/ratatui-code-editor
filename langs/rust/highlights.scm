@@ -32,7 +32,7 @@
 ; Extraneous
 ; ---
 
-(self) @variable
+(self) @keyword
 (enum_variant (identifier) @type.enum.variant)
 
 (field_initializer
@@ -139,7 +139,7 @@
 "unsafe" @keyword
 "macro_rules!" @function.macro
 
-(mutable_specifier) @keyword.storage.modifier.mut
+(mutable_specifier) @keyword
 
 (reference_type "&" @keyword.storage.modifier.ref)
 (self_parameter "&" @keyword.storage.modifier.ref)

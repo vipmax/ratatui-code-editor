@@ -76,7 +76,7 @@ impl Editor {
                 Right => self.move_right(shift),
                 Up => self.move_up(shift),
                 Down => self.move_down(shift),
-                Backspace => self.delete_char(),
+                Backspace => self.delete(),
                 Enter => self.insert_text("\n"),
                 Char(c) => self.insert_text(&c.to_string()),
                 _ => {}
@@ -280,22 +280,39 @@ impl Editor {
 
     fn insert_text(&mut self, text: &str) {
         self.code.begin_batch();
-        self.code.insert(self.cursor, text);
+    
+        let insert_at = match self.selection.take() {
+            Some(selection) => {
+                let (start, end) = selection.sorted();
+                self.code.remove(start, end);
+                start
+            }
+            None => self.cursor,
+        };
+    
+        self.code.insert(insert_at, text);
         self.code.commit_batch();
-        self.cursor += text.chars().count();
+    
+        self.cursor = insert_at + text.chars().count();
     }
 
-    fn delete_char(&mut self) {
-        if self.cursor > 0 {
+
+    fn delete(&mut self) {
+        if let Some(selection) = self.selection.take() {
+            let (start, end) = selection.sorted();
+            self.delete_text(start, end);
+            self.cursor = start;
+        } else if self.cursor > 0 {
             self.delete_text(self.cursor - 1, self.cursor);
+            self.cursor -= 1;
         }
     }
+
 
     fn delete_text(&mut self, from: usize, to: usize) {
         self.code.begin_batch();
         self.code.remove(from, to);
         self.code.commit_batch();
-        self.cursor = from;
     }
     
     fn undo(&mut self) {
