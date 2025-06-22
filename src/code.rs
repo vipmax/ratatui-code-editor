@@ -293,6 +293,10 @@ pub fn query_matches(
     pub fn slice(&self, start: usize, end: usize) -> String {
         self.content.slice(start..end).to_string()
     }
+
+    pub fn len(&self) -> usize {
+        self.content.len_chars()
+    }
 }
 
 #[cfg(test)]

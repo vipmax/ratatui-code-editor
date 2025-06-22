@@ -56,38 +56,32 @@ impl Editor {
         }
     }
     
-    pub fn input(
-        &mut self, key: KeyEvent
-    ) -> anyhow::Result<()> {
+    pub fn input(&mut self, key: KeyEvent) -> anyhow::Result<()> {
         use crossterm::event::KeyCode::*;
-
+    
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-
-        if ctrl {
-            match key.code {
-                Char('z') => self.undo(),
-                Char('y') => self.redo(),
-                Char('c') => self.copy_selection()?,
-                Char('v') => self.paste_clipboard()?,
-                Char('x') => self.cut_selection()?,
-                _ => {}
-            }
-        } else {
-            match key.code {
-                Left => self.move_left(shift),
-                Right => self.move_right(shift),
-                Up => self.move_up(shift),
-                Down => self.move_down(shift),
-                Backspace => self.delete(),
-                Enter => self.insert_text("\n"),
-                Char(c) => self.insert_text(&c.to_string()),
-                _ => {}
-            }
+    
+        match key.code {
+            Char('z') if ctrl => self.undo(),
+            Char('y') if ctrl => self.redo(),
+            Char('c') if ctrl => self.copy_selection()?,
+            Char('v') if ctrl => self.paste_clipboard()?,
+            Char('x') if ctrl => self.cut_selection()?,
+            Char('k') if ctrl => self.delete_line(),
+            Char('d') => self.duplicate()?,
+            
+            Left => self.move_left(shift),
+            Right => self.move_right(shift),
+            Up => self.move_up(shift),
+            Down => self.move_down(shift),
+            Backspace => self.delete(),
+            Enter => self.insert_text("\n"),
+            Char(c) => self.insert_text(&c.to_string()),
+            _ => {}
         }
+    
         self.scroll_to_cursor();
-        
-        
         Ok(())
     }
 
@@ -273,6 +267,7 @@ impl Editor {
             self.selection = None;
         }
     }
+    
     fn selection_anchor(&self) -> usize {
         self.selection
             .as_ref()
@@ -280,8 +275,7 @@ impl Editor {
             .unwrap_or(self.cursor)
     }
 
-
-    fn insert_text(&mut self, text: &str) {
+    pub fn insert_text(&mut self, text: &str) {
         self.code.begin_batch();
     
         let insert_at = match self.selection.take() {
@@ -298,8 +292,13 @@ impl Editor {
     
         self.cursor = insert_at + text.chars().count();
     }
-
-
+    
+    pub fn insert_text_at(&mut self, pos: usize, text: &str) {
+        self.code.begin_batch();
+        self.code.insert(pos, text);
+        self.code.commit_batch();
+    }
+    
     fn delete(&mut self) {
         if let Some(selection) = &self.selection {
             let (start, end) = selection.sorted();
@@ -312,8 +311,7 @@ impl Editor {
         }
     }
 
-
-    fn delete_text(&mut self, from: usize, to: usize) {
+    pub fn delete_text(&mut self, from: usize, to: usize) {
         self.code.begin_batch();
         self.code.remove(from, to);
         self.code.commit_batch();
@@ -403,13 +401,53 @@ impl Editor {
         Ok(())
     }
 
-
     pub fn paste_clipboard(&mut self) -> anyhow::Result<()> {
         let mut clipboard = arboard::Clipboard::new()?;
         let text = clipboard.get_text()?;
         self.insert_text(&text);
         Ok(())
     }
+    
+    pub fn delete_line(&mut self) {
+        let (start, end) = self.code.line_boundaries(self.cursor);
+    
+        if start == end && start == self.code.len() {
+            return;
+        }
+    
+        self.delete_text(start, end);
+        self.cursor = start;
+        self.selection = None;
+    }
+    
+    pub fn duplicate(&mut self) -> anyhow::Result<()> {
+        if let Some(selection) = &self.selection {
+            let text = self.code.slice(selection.start, selection.end);
+            let insert_pos = selection.end;
+            self.insert_text_at(insert_pos, &text);
+            self.cursor = insert_pos + text.chars().count();
+            self.selection = None;
+        } else {
+            let (line_start, line_end) = self.code.line_boundaries(self.cursor);
+            let line_text = self.code.slice(line_start, line_end);
+            let column = self.cursor - line_start;
+    
+            let insert_pos = line_end;
+            let to_insert = if line_text.ends_with('\n') {
+                line_text.clone()
+            } else {
+                format!("{}\n", line_text)
+            };
+            self.insert_text_at(insert_pos, &to_insert);
+
+            let new_line_len = to_insert.trim_end_matches('\n').chars().count();
+            let new_column = column.min(new_line_len);
+    
+            self.cursor = insert_pos + new_column;
+        }
+        Ok(())
+    }
+
 }
 
 impl Widget for &Editor {
