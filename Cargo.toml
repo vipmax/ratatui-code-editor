@@ -15,3 +15,4 @@ tree-sitter-javascript = "0.23.1"
 tree-sitter-rust = "0.24.0"
 tree-sitter-typescript = "0.23.2"
 unicode-width = "0.2.0"
+arboard = { version = "3.5.0", default-features = false }

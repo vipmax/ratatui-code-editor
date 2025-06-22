@@ -289,6 +289,10 @@ pub fn query_matches(
 
         (start, end)
     }
+
+    pub fn slice(&self, start: usize, end: usize) -> String {
+        self.content.slice(start..end).to_string()
+    }
 }
 
 #[cfg(test)]

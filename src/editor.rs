@@ -68,6 +68,9 @@ impl Editor {
             match key.code {
                 Char('z') => self.undo(),
                 Char('y') => self.redo(),
+                Char('c') => self.copy_selection()?,
+                Char('v') => self.paste_clipboard()?,
+                Char('x') => self.cut_selection()?,
                 _ => {}
             }
         } else {
@@ -298,10 +301,11 @@ impl Editor {
 
 
     fn delete(&mut self) {
-        if let Some(selection) = self.selection.take() {
+        if let Some(selection) = &self.selection {
             let (start, end) = selection.sorted();
             self.delete_text(start, end);
             self.cursor = start;
+            self.selection = None;
         } else if self.cursor > 0 {
             self.delete_text(self.cursor - 1, self.cursor);
             self.cursor -= 1;
@@ -377,6 +381,35 @@ impl Editor {
         self.code.content.to_string()
     }
 
+    pub fn copy_selection(&mut self) -> anyhow::Result<()> {
+        if let Some(selection) = &self.selection {
+            let text = self.code.slice(selection.start, selection.end);
+            let mut clipboard = arboard::Clipboard::new()?;
+            clipboard.set_text(text)?;
+        }
+        Ok(())
+    }
+    
+    pub fn cut_selection(&mut self) -> anyhow::Result<()> {
+        if let Some(selection) = self.selection.take() {
+            let text = self.code.slice(selection.start, selection.end);
+            let mut clipboard = arboard::Clipboard::new()?;
+            clipboard.set_text(text)?;
+    
+            self.delete_text(selection.start, selection.end);
+            self.cursor = selection.start;
+            self.selection = None;
+        }
+        Ok(())
+    }
+
+
+    pub fn paste_clipboard(&mut self) -> anyhow::Result<()> {
+        let mut clipboard = arboard::Clipboard::new()?;
+        let text = clipboard.get_text()?;
+        self.insert_text(&text);
+        Ok(())
+    }
 }
 
 impl Widget for &Editor {
