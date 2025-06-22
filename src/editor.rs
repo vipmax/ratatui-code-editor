@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use unicode_width::UnicodeWidthChar;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::Stdout;
+use std::time::{Instant, Duration};
 
 use crate::code::Code;
 use crate::history::{Edit, EditKind};
@@ -24,6 +25,8 @@ pub struct Editor {
     height: usize,
     theme: Theme,
     selection: Option<Selection>,
+    last_click: Option<(Instant, usize)>,
+    last_last_click: Option<(Instant, usize)>,
 }
 
 impl Editor {
@@ -48,6 +51,8 @@ impl Editor {
             height: h,
             theme,
             selection: None,
+            last_click: None,
+            last_last_click: None,
         }
     }
     
@@ -97,8 +102,37 @@ impl Editor {
 
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Some(cursor) = pos {
-                    self.selection = Some(Selection::from_anchor_and_cursor(cursor, cursor));
-                    self.cursor = cursor;
+                    let now = Instant::now();
+                    let max_dt = Duration::from_millis(700);
+            
+                    let click = (now, cursor);
+                    let (dbl, tpl) = (
+                        self.last_click
+                            .map(|(t, p)|{ 
+                                p == cursor && now.duration_since(t) < max_dt
+                            }).unwrap_or(false),
+                        self.last_click.zip(self.last_last_click)
+                            .map(|((t1, p1), (t0, p0))| { 
+                                p0 == cursor && p1 == cursor &&
+                                now.duration_since(t0) < max_dt && 
+                                t1.duration_since(t0) < max_dt
+                            })
+                            .unwrap_or(false),
+                    );
+            
+                    let (start, end) = if tpl {
+                        self.code.line_boundaries(cursor)
+                    } else if dbl {
+                        self.code.word_boundaries(cursor)
+                    } else {
+                        (cursor, cursor)
+                    };
+            
+                    self.selection = Some(Selection::from_anchor_and_cursor(start, end));
+                    self.cursor = end;
+            
+                    self.last_last_click = self.last_click;
+                    self.last_click = Some(click);
                 }
             }
 
@@ -307,59 +341,6 @@ impl Editor {
         if self.offset_y < max_offset {
             self.offset_y += 1;
         }
-    }
-
-    pub fn click(&mut self, mouse_x: u16, mouse_y: u16, area: Rect) {
-        let total_lines = self.code.content.len_lines();
-        let max_line_number = total_lines.max(1);
-        let line_number_digits = max_line_number.to_string().len();
-        let line_number_width = (line_number_digits + 2) as u16;
-
-        if mouse_y < area.top()
-            || mouse_y >= area.bottom()
-            || mouse_x < area.left() + line_number_width
-        {
-            return;
-        }
-
-        let clicked_row = (mouse_y - area.top()) as usize + self.offset_y;
-        if clicked_row >= self.code.content.len_lines() {
-            return;
-        }
-
-        let clicked_col = (mouse_x - area.left() - line_number_width) as usize;
-        let line = self.code.content.line(clicked_row);
-
-        let mut current_col = 0;
-        let mut char_idx = 0;
-        for ch in line.chars() {
-            let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-            if current_col + ch_width > clicked_col {
-                break;
-            }
-            current_col += ch_width;
-            char_idx += 1;
-        }
-
-        let line_visual_width: usize = line
-            .chars()
-            .map(|ch| unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0))
-            .sum();
-
-        if clicked_col >= line_visual_width {
-            // Fix to prevent cursor jumping to next line
-            let mut end_idx = line.len_chars();
-            if end_idx > 0 && line.char(end_idx - 1) == '\n' {
-                end_idx -= 1;
-            }
-            char_idx = end_idx;
-        }
-
-        let line_start = self.code.content.line_to_char(clicked_row);
-
-        let new_cursor = line_start + char_idx;
-        self.update_selection(new_cursor, true);
-        self.cursor = new_cursor;
     }
 
     fn build_theme(theme: &Vec<(&str, &str)>) -> HashMap<String, Style> {

@@ -247,8 +247,48 @@ pub fn query_matches(
         self.applying_history = true;
         Some(batch)
     }
+    
+    pub fn word_boundaries(&self, pos: usize) -> (usize, usize) {
+        let len = self.content.len_chars();
+        if pos >= len {
+            return (pos, pos);
+        }
+    
+        let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+    
+        let mut start = pos;
+        while start > 0 {
+            let c = self.content.char(start - 1);
+            if !is_word_char(c) {
+                break;
+            }
+            start -= 1;
+        }
+    
+        let mut end = pos;
+        while end < len {
+            let c = self.content.char(end);
+            if !is_word_char(c) {
+                break;
+            }
+            end += 1;
+        }
+    
+        (start, end)
+    }
 
+    pub fn line_boundaries(&self, pos: usize) -> (usize, usize) {
+        let total_chars = self.content.len_chars();
+        if pos >= total_chars {
+            return (pos, pos);
+        }
 
+        let line = self.content.char_to_line(pos);
+        let start = self.content.line_to_char(line);
+        let end = start + self.content.line(line).len_chars();
+
+        (start, end)
+    }
 }
 
 #[cfg(test)]
