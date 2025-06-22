@@ -23,6 +23,10 @@ impl Selection {
     pub fn is_active(&self) -> bool {
         self.start != self.end
     }
+    
+    pub fn is_empty(&self) -> bool {
+        self.start.max(self.end) == self.start.min(self.end)
+    }
 
     pub fn contains(&self, index: usize) -> bool {
         index >= self.start && index < self.end

@@ -14,36 +14,32 @@ use crate::code::Code;
 use crate::history::{Edit, EditKind};
 use crate::selection::Selection;
 
-type Theme = HashMap<String, Style>;
-
 pub struct Editor {
-    name: String,
     code: Code,
     cursor: usize,
     offset_y: usize,
     width: usize,
     height: usize,
-    theme: Theme,
+    theme: HashMap<String, Style>,
     selection: Option<Selection>,
     last_click: Option<(Instant, usize)>,
     last_last_click: Option<(Instant, usize)>,
 }
 
 impl Editor {
-    /// Create a new editor instance, 
-    /// with the given name, language, text, width, and height.
+    /// Create a new editor instance,
+    /// with language, text, width, and height.
     pub fn new(
-        name: &str, lang: &str, text: &str, w: usize, h: usize,
+        lang: &str, text: &str, w: usize, h: usize,
         theme: Vec<(&str, &str)>,
     ) -> Self {
         let code = Code::new(text, lang)
             .or_else(|_| Code::new(text, "text"))
             .unwrap();
-        
+
         let theme = Self::build_theme(&theme);
 
         Self {
-            name: name.to_string(),
             code,
             cursor: 0,
             offset_y: 0,
@@ -55,32 +51,33 @@ impl Editor {
             last_last_click: None,
         }
     }
-    
+
     pub fn input(&mut self, key: KeyEvent) -> anyhow::Result<()> {
         use crossterm::event::KeyCode::*;
-    
+
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    
+
         match key.code {
-            Char('z') if ctrl => self.undo(),
-            Char('y') if ctrl => self.redo(),
-            Char('c') if ctrl => self.copy_selection()?,
-            Char('v') if ctrl => self.paste_clipboard()?,
-            Char('x') if ctrl => self.cut_selection()?,
-            Char('k') if ctrl => self.delete_line(),
-            Char('d') => self.duplicate()?,
-            
-            Left => self.move_left(shift),
-            Right => self.move_right(shift),
-            Up => self.move_up(shift),
-            Down => self.move_down(shift),
-            Backspace => self.delete(),
-            Enter => self.insert_text("\n"),
-            Char(c) => self.insert_text(&c.to_string()),
+            Char('z') if ctrl => self.handle_undo(),
+            Char('y') if ctrl => self.handle_redo(),
+            Char('c') if ctrl => self.handle_copy()?,
+            Char('v') if ctrl => self.handle_paste()?,
+            Char('x') if ctrl => self.handle_cut()?,
+            Char('k') if ctrl => self.handle_delete_line(),
+            Char('d') if ctrl => self.handle_duplicate()?,
+
+            Left        => self.handle_left(shift),
+            Right       => self.handle_right(shift),
+            Up          => self.handle_up(shift),
+            Down        => self.handle_down(shift),
+            Backspace   => self.handle_delete(),
+            Enter       => self.handle_char('\n'),
+            Char(c)     => self.handle_char(c),
+            Tab         => self.handle_tab(),
             _ => {}
         }
-    
+
         self.scroll_to_cursor();
         Ok(())
     }
@@ -101,22 +98,22 @@ impl Editor {
                 if let Some(cursor) = pos {
                     let now = Instant::now();
                     let max_dt = Duration::from_millis(700);
-            
+
                     let click = (now, cursor);
                     let (dbl, tpl) = (
                         self.last_click
-                            .map(|(t, p)|{ 
+                            .map(|(t, p)|{
                                 p == cursor && now.duration_since(t) < max_dt
                             }).unwrap_or(false),
                         self.last_click.zip(self.last_last_click)
-                            .map(|((t1, p1), (t0, p0))| { 
+                            .map(|((t1, p1), (t0, p0))| {
                                 p0 == cursor && p1 == cursor &&
-                                now.duration_since(t0) < max_dt && 
+                                now.duration_since(t0) < max_dt &&
                                 t1.duration_since(t0) < max_dt
                             })
                             .unwrap_or(false),
                     );
-            
+
                     let (start, end) = if tpl {
                         self.code.line_boundaries(cursor)
                     } else if dbl {
@@ -124,10 +121,10 @@ impl Editor {
                     } else {
                         (cursor, cursor)
                     };
-            
+
                     self.selection = Some(Selection::from_anchor_and_cursor(start, end));
                     self.cursor = end;
-            
+
                     self.last_last_click = self.last_click;
                     self.last_click = Some(click);
                 }
@@ -146,9 +143,11 @@ impl Editor {
 
         Ok(())
     }
-    
-    fn cursor_from_mouse(&self, mouse_x: u16, mouse_y: u16, area: Rect) -> Option<usize> {
-        let total_lines = self.code.content.len_lines();
+
+    fn cursor_from_mouse(
+        &self, mouse_x: u16, mouse_y: u16, area: Rect
+    ) -> Option<usize> {
+        let total_lines = self.code.len_lines();
         let max_line_number = total_lines.max(1);
         let line_number_digits = max_line_number.to_string().len();
         let line_number_width = (line_number_digits + 2) as u16;
@@ -161,17 +160,17 @@ impl Editor {
         }
 
         let clicked_row = (mouse_y - area.top()) as usize + self.offset_y;
-        if clicked_row >= self.code.content.len_lines() {
+        if clicked_row >= self.code.len_lines() {
             return None;
         }
 
         let clicked_col = (mouse_x - area.left() - line_number_width) as usize;
-        let line = self.code.content.line(clicked_row);
+        let line = self.code.line(clicked_row);
 
         let mut current_col = 0;
         let mut char_idx = 0;
         for ch in line.chars() {
-            let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
             if current_col + ch_width > clicked_col {
                 break;
             }
@@ -179,9 +178,8 @@ impl Editor {
             char_idx += 1;
         }
 
-        let line_visual_width: usize = line
-            .chars()
-            .map(|ch| unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0))
+        let line_visual_width: usize = line.chars()
+            .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0))
             .sum();
 
         if clicked_col >= line_visual_width {
@@ -192,7 +190,7 @@ impl Editor {
             char_idx = end_idx;
         }
 
-        let line_start = self.code.content.line_to_char(clicked_row);
+        let line_start = self.code.line_to_char(clicked_row);
         Some(line_start + char_idx)
     }
 
@@ -201,16 +199,9 @@ impl Editor {
         self.width = w as usize;
         self.height = h as usize;
     }
-    
-    fn position(&self) -> (usize, usize) {
-        let row = self.code.content.char_to_line(self.cursor);
-        let line_start = self.code.content.line_to_char(row);
-        let col = self.cursor - line_start;
-        (row, col)
-    }
 
     fn scroll_to_cursor(&mut self) {
-        let (cursor_row, _) = self.position();
+        let (cursor_row, _) = self.code.point(self.cursor);
 
         if cursor_row >= self.offset_y + self.height {
             self.offset_y = cursor_row - self.height + 1;
@@ -219,7 +210,7 @@ impl Editor {
         }
     }
 
-    fn move_left(&mut self, shift: bool) {
+    fn handle_left(&mut self, shift: bool) {
         if self.cursor > 0 {
             let new_cursor = self.cursor - 1;
             self.update_selection(new_cursor, shift);
@@ -227,19 +218,19 @@ impl Editor {
         }
     }
 
-    fn move_right(&mut self, shift: bool) {
-        if self.cursor < self.code.content.len_chars() {
+    fn handle_right(&mut self, shift: bool) {
+        if self.cursor < self.code.len() {
             let new_cursor = self.cursor + 1;
             self.update_selection(new_cursor, shift);
             self.cursor = new_cursor;
         }
     }
 
-    fn move_up(&mut self, shift: bool) {
-        let (row, col) = self.position();
+    fn handle_up(&mut self, shift: bool) {
+        let (row, col) = self.code.point(self.cursor);
         if row > 0 {
-            let prev_line_start = self.code.content.line_to_char(row - 1);
-            let prev_line_len = self.code.content.line(row - 1).len_chars();
+            let prev_line_start = self.code.line_to_char(row - 1);
+            let prev_line_len = self.code.line_len(row - 1);
             let new_col = col.min(prev_line_len);
             let new_cursor = prev_line_start + new_col;
             self.update_selection(new_cursor, shift);
@@ -247,18 +238,18 @@ impl Editor {
         }
     }
 
-    fn move_down(&mut self, shift: bool) {
-        let (row, col) = self.position();
-        if row + 1 < self.code.content.len_lines() {
-            let next_line_start = self.code.content.line_to_char(row + 1);
-            let next_line_len = self.code.content.line(row + 1).len_chars();
+    fn handle_down(&mut self, shift: bool) {
+        let (row, col) = self.code.point(self.cursor);
+        if row + 1 < self.code.len_lines() {
+            let next_line_start = self.code.line_to_char(row + 1);
+            let next_line_len = self.code.line_len(row + 1);
             let new_col = col.min(next_line_len);
             let new_cursor = next_line_start + new_col;
             self.update_selection(new_cursor, shift);
             self.cursor = new_cursor;
         }
     }
-    
+
     fn update_selection(&mut self, new_cursor: usize, shift: bool) {
         if shift {
             let anchor = self.selection_anchor();
@@ -267,7 +258,7 @@ impl Editor {
             self.selection = None;
         }
     }
-    
+
     fn selection_anchor(&self) -> usize {
         self.selection
             .as_ref()
@@ -275,31 +266,41 @@ impl Editor {
             .unwrap_or(self.cursor)
     }
 
-    pub fn insert_text(&mut self, text: &str) {
+    pub fn handle_char(&mut self, text: char) {
+        let text = text.to_string();
         self.code.begin_batch();
-    
-        let insert_at = match self.selection.take() {
-            Some(selection) => {
-                let (start, end) = selection.sorted();
-                self.code.remove(start, end);
-                start
-            }
-            None => self.cursor,
-        };
-    
-        self.code.insert(insert_at, text);
+        self.remove_selection();
+        self.code.insert(self.cursor, &text);
         self.code.commit_batch();
-    
-        self.cursor = insert_at + text.chars().count();
+        self.cursor += text.chars().count();
     }
-    
-    pub fn insert_text_at(&mut self, pos: usize, text: &str) {
+
+    pub fn insert_text(&mut self, pos: usize, text: &str) {
         self.code.begin_batch();
         self.code.insert(pos, text);
         self.code.commit_batch();
     }
-    
-    fn delete(&mut self) {
+
+    pub fn delete_text(&mut self, from: usize, to: usize) {
+        self.code.begin_batch();
+        self.code.remove(from, to);
+        self.code.commit_batch();
+    }
+
+    pub fn remove_selection(&mut self) {
+        if let Some(selection) = &self.selection {
+            if selection.is_empty() {
+                self.selection = None;
+                return;
+            }
+            let (start, end) = selection.sorted();
+            self.code.remove(start, end);
+            self.cursor = start;
+            self.selection = None;
+        }
+    }
+
+    fn handle_delete(&mut self) {
         if let Some(selection) = &self.selection {
             let (start, end) = selection.sorted();
             self.delete_text(start, end);
@@ -311,13 +312,15 @@ impl Editor {
         }
     }
 
-    pub fn delete_text(&mut self, from: usize, to: usize) {
+    pub fn handle_tab(&mut self, ) {
+        let text = self.code.indent();
         self.code.begin_batch();
-        self.code.remove(from, to);
+        self.code.insert(self.cursor, &text);
         self.code.commit_batch();
+        self.cursor += text.chars().count();
     }
-    
-    fn undo(&mut self) {
+
+    fn handle_undo(&mut self) {
         let edits = self.code.undo();
         if let Some(edits) = edits {
             for edit in edits.iter().rev()  {
@@ -332,8 +335,8 @@ impl Editor {
             }
         }
     }
-    
-    fn redo(&mut self) {
+
+    fn handle_redo(&mut self) {
         let edits = self.code.redo();
         if let Some(edits) = edits {
             for edit in edits {
@@ -356,8 +359,8 @@ impl Editor {
     }
 
     pub fn scroll_down(&mut self, area_height: usize) {
-        let max_offset = self.code.content.len_lines().saturating_sub(area_height);
-        if self.offset_y < max_offset {
+        let len_lines = self.code.len_lines();
+        if self.offset_y < len_lines.saturating_sub(area_height) {
             self.offset_y += 1;
         }
     }
@@ -369,17 +372,17 @@ impl Editor {
                 let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
                 let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
                 let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
-                
+
                 (name.to_string(), Style::default().fg(Color::Rgb(r, g, b)))
             })
             .collect()
     }
-    
+
     pub fn get_content(&self) -> String {
-        self.code.content.to_string()
+        self.code.get_content()
     }
 
-    pub fn copy_selection(&mut self) -> anyhow::Result<()> {
+    pub fn handle_copy(&mut self) -> anyhow::Result<()> {
         if let Some(selection) = &self.selection {
             let text = self.code.slice(selection.start, selection.end);
             let mut clipboard = arboard::Clipboard::new()?;
@@ -387,13 +390,13 @@ impl Editor {
         }
         Ok(())
     }
-    
-    pub fn cut_selection(&mut self) -> anyhow::Result<()> {
+
+    pub fn handle_cut(&mut self) -> anyhow::Result<()> {
         if let Some(selection) = self.selection.take() {
             let text = self.code.slice(selection.start, selection.end);
             let mut clipboard = arboard::Clipboard::new()?;
             clipboard.set_text(text)?;
-    
+
             self.delete_text(selection.start, selection.end);
             self.cursor = selection.start;
             self.selection = None;
@@ -401,48 +404,54 @@ impl Editor {
         Ok(())
     }
 
-    pub fn paste_clipboard(&mut self) -> anyhow::Result<()> {
+    pub fn handle_paste(&mut self) -> anyhow::Result<()> {
         let mut clipboard = arboard::Clipboard::new()?;
         let text = clipboard.get_text()?;
-        self.insert_text(&text);
+
+        self.code.begin_batch();
+        self.remove_selection();
+        self.code.insert(self.cursor, &text);
+        self.code.commit_batch();
+        self.cursor += text.chars().count();
+
         Ok(())
     }
-    
-    pub fn delete_line(&mut self) {
+
+    pub fn handle_delete_line(&mut self) {
         let (start, end) = self.code.line_boundaries(self.cursor);
-    
+
         if start == end && start == self.code.len() {
             return;
         }
-    
+
         self.delete_text(start, end);
         self.cursor = start;
         self.selection = None;
     }
-    
-    pub fn duplicate(&mut self) -> anyhow::Result<()> {
+
+    pub fn handle_duplicate(&mut self) -> anyhow::Result<()> {
         if let Some(selection) = &self.selection {
             let text = self.code.slice(selection.start, selection.end);
             let insert_pos = selection.end;
-            self.insert_text_at(insert_pos, &text);
+            self.insert_text(insert_pos, &text);
             self.cursor = insert_pos + text.chars().count();
             self.selection = None;
         } else {
             let (line_start, line_end) = self.code.line_boundaries(self.cursor);
             let line_text = self.code.slice(line_start, line_end);
             let column = self.cursor - line_start;
-    
+
             let insert_pos = line_end;
             let to_insert = if line_text.ends_with('\n') {
                 line_text.clone()
             } else {
                 format!("{}\n", line_text)
             };
-            self.insert_text_at(insert_pos, &to_insert);
+            self.insert_text(insert_pos, &to_insert);
 
             let new_line_len = to_insert.trim_end_matches('\n').chars().count();
             let new_column = column.min(new_line_len);
-    
+
             self.cursor = insert_pos + new_column;
         }
         Ok(())
@@ -452,12 +461,12 @@ impl Editor {
 
 impl Widget for &Editor {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let total_lines = self.code.content.len_lines();
+        let total_lines = self.code.len_lines();
         let max_line_number = total_lines.max(1);
         let line_number_digits = max_line_number.to_string().len();
-        let line_number_width = line_number_digits + 2; 
+        let line_number_width = line_number_digits + 2;
 
-        let (cursor_line, cursor_char_col) = self.position();
+        let (cursor_line, cursor_char_col) = self.code.point(self.cursor);
         let mut draw_y = area.top();
 
         let start_line = self.offset_y;
@@ -470,7 +479,7 @@ impl Widget for &Editor {
                 break;
             }
 
-            let line = self.code.content.line(line_idx);
+            let line = self.code.line(line_idx);
 
             let line_number = format!("{:>width$}  ", line_idx + 1, width = line_number_digits);
 
@@ -502,36 +511,34 @@ impl Widget for &Editor {
 
         /*
             This code block is responsible for rendering syntax highlighting within the visible area of the editor.
-            The editor retrieves all relevant syntax captures (query_matches) within the visible line range. 
+            The editor retrieves all relevant syntax captures (query_matches) within the visible line range.
             For each capture, it:
                 - gets the corresponding style from the theme,
                 - converts byte positions to screen coordinates,
                 - iterates over each character in the captured range,
                 - and applies the style to each visible character cell in the buffer.
         */
-        if self.code.is_highlightable() {
+        if self.code.is_highlight() {
             let end_line = max_line_number + 1;
 
-            let allowed = self.theme.keys().collect::<Vec<_>>();
-            let matches = self.code.query_matches(start_line, end_line, &allowed);
+            
+            let highlights = self.code.highlight(start_line, end_line, &self.theme);
 
-            for (start_byte, end_byte, capture_name) in matches {
-                let style = match self.theme.get(&capture_name) {
-                    Some(s) => *s, None => continue,
-                };
-                let start_offset = self.code.content.byte_to_char(start_byte);
-                let end_offset = self.code.content.byte_to_char(end_byte);
+            for (start_byte, end_byte, style) in highlights {
+               
+                let start_offset = self.code.byte_to_char(start_byte);
+                let end_offset = self.code.byte_to_char(end_byte);
 
-                let start_line_idx = self.code.content.byte_to_line(start_byte);
-                let end_line_idx = self.code.content.byte_to_line(end_byte);
+                let start_line_idx = self.code.byte_to_line(start_byte);
+                let end_line_idx = self.code.byte_to_line(end_byte);
 
-                let start_line_offset = self.code.content.line_to_char(start_line_idx);
-                let end_line_offset = self.code.content.line_to_char(end_line_idx);
+                let start_line_offset = self.code.line_to_char(start_line_idx);
+                let end_line_offset = self.code.line_to_char(end_line_idx);
 
                 let start_col = start_offset - start_line_offset;
                 let end_col = end_offset - start_line_offset;
 
-                let content = self.code.content.byte_slice(start_byte..end_byte).to_string();
+                let content = self.code.byte_slice(start_byte, end_byte).to_string();
 
                 let mut x = start_col;
                 let mut y = start_line_idx;
@@ -556,15 +563,15 @@ impl Widget for &Editor {
                 }
             }
         }
-        
+
         if let Some(selection) = self.selection {
-            
+
             let start = selection.start.min(selection.end);
             let end = selection.start.max(selection.end);
-        
-            let start_line = self.code.content.char_to_line(start);
-            let end_line = self.code.content.char_to_line(end);
-        
+
+            let start_line = self.code.char_to_line(start);
+            let end_line = self.code.char_to_line(end);
+
             for line_idx in start_line..=end_line {
                 if line_idx < self.offset_y {
                     continue; // not visible
@@ -572,21 +579,21 @@ impl Widget for &Editor {
                 if line_idx >= self.offset_y + area.height as usize {
                     break; // not visible
                 }
-        
-                let line = self.code.content.line(line_idx);
-                let line_start = self.code.content.line_to_char(line_idx);
+
+                let line = self.code.line(line_idx);
+                let line_start = self.code.line_to_char(line_idx);
                 let line_end = line_start + line.len_chars();
-        
+
                 let sel_start = start.max(line_start);
                 let sel_end = end.min(line_end);
-        
+
                 let rel_start = sel_start - line_start;
                 let rel_end = sel_end - line_start;
-        
+
                 let draw_y = area.top() + (line_idx - self.offset_y) as u16;
                 let mut x = 0;
                 let mut char_idx = 0;
-        
+
                 for ch in line.chars() {
                     if char_idx >= rel_start && char_idx < rel_end {
                         let draw_x = area.left() + line_number_width as u16 + x;
@@ -595,7 +602,7 @@ impl Widget for &Editor {
                                 .set_style(Style::default().bg(Color::DarkGray));
                         }
                     }
-        
+
                     x += UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
                     char_idx += 1;
                 }
@@ -605,7 +612,7 @@ impl Widget for &Editor {
 
         // draw the cursor like a block
         if cursor_line >= self.offset_y && cursor_line < self.offset_y + area.height as usize {
-            let line = self.code.content.line(cursor_line);
+            let line = self.code.line(cursor_line);
             let max_text_width = (area.width as usize).saturating_sub(line_number_width);
             let cursor_visual_col = line
                 .chars()
@@ -623,4 +630,3 @@ impl Widget for &Editor {
         }
     }
 }
-

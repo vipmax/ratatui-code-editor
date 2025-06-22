@@ -110,7 +110,7 @@ fn main() -> anyhow::Result<()> {
     
     let theme = get_theme();
 
-    let mut editor = Editor::new(filename, &language, &content, w, h, theme);
+    let mut editor = Editor::new(&language, &content, w, h, theme);
 
     terminal.draw(|f| {
         f.render_widget(&editor, f.area());

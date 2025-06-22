@@ -1,36 +1,21 @@
 use anyhow::{Result, anyhow};
-use ropey::Rope;
+use ropey::{Rope, RopeSlice};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{InputEdit, Point, QueryCursor};
 use tree_sitter::{Language, Parser, Query, Tree};
 use crate::history::{History, EditBatch, Edit, EditKind};
 use rust_embed::RustEmbed;
+use std::collections::HashMap;
+use std::thread::park;
 
 #[derive(RustEmbed)]
 #[folder = ""]
 #[include = "langs/*/*"]
 struct LangAssets;
 
-fn get_language(lang: &str) -> Option<Language> {
-    match lang {
-        "rust" => Some(tree_sitter_rust::LANGUAGE.into()),
-        "javascript" => Some(tree_sitter_javascript::LANGUAGE.into()),
-        "typescript" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
-        _ => None,
-    }
-}
-
-fn get_highlights(lang: &str) -> anyhow::Result<String> {
-    let p = format!("langs/{}/highlights.scm", lang);
-    let highlights_bytes =
-        LangAssets::get(&p).ok_or_else(|| anyhow!("No highlights found for {}", lang))?;
-    let highlights_bytes = highlights_bytes.data.as_ref();
-    let highlights = std::str::from_utf8(highlights_bytes)?;
-    Ok(highlights.to_string())
-}
-
 pub struct Code {
-    pub content: ropey::Rope,
+    content: ropey::Rope,
+    lang: String,
     tree: Option<Tree>,
     parser: Option<Parser>,
     query: Option<Query>,
@@ -42,9 +27,9 @@ pub struct Code {
 impl Code {
     /// Create a new `Code` instance with the given text and language.
     pub fn new(text: &str, lang: &str) -> Result<Self> {
-        let (tree, parser, query) = match get_language(lang) {
+        let (tree, parser, query) = match Self::get_language(lang) {
             Some(language) => {
-                let highlights = get_highlights(lang)?;
+                let highlights = Self::get_highlights(lang)?;
                 let mut parser = Parser::new();
                 parser.set_language(&language)?;
                 let tree = parser.parse(text, None);
@@ -56,11 +41,81 @@ impl Code {
         
         Ok(Self {
             content: Rope::from_str(text),
+            lang: lang.to_string(),
             tree, parser, query,
             applying_history: true,
             history: History::new(1000),
             current_batch: Vec::new(),
         })
+    }
+    
+    fn get_language(lang: &str) -> Option<Language> {
+        match lang {
+            "rust" => Some(tree_sitter_rust::LANGUAGE.into()),
+            "javascript" => Some(tree_sitter_javascript::LANGUAGE.into()),
+            "typescript" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            _ => None,
+        }
+    }
+    
+    fn get_highlights(lang: &str) -> anyhow::Result<String> {
+        let p = format!("langs/{}/highlights.scm", lang);
+        let highlights_bytes =
+            LangAssets::get(&p).ok_or_else(|| anyhow!("No highlights found for {}", lang))?;
+        let highlights_bytes = highlights_bytes.data.as_ref();
+        let highlights = std::str::from_utf8(highlights_bytes)?;
+        Ok(highlights.to_string())
+    }
+
+    pub fn point(&self, offset: usize) -> (usize, usize) {
+        let row = self.content.char_to_line(offset);
+        let line_start = self.content.line_to_char(row);
+        let col = offset - line_start;
+        (row, col)
+    }
+    
+    
+    pub fn get_content(&self) -> String {
+        self.content.to_string()
+    }
+    pub fn slice(&self, start: usize, end: usize) -> String {
+        self.content.slice(start..end).to_string()
+    }
+
+    pub fn len(&self) -> usize {
+        self.content.len_chars()
+    }
+
+    pub fn len_lines(&self) -> usize {
+        self.content.len_lines()
+    }
+
+    pub fn line_to_char(&self, line_idx: usize) -> usize {
+        self.content.line_to_char(line_idx)
+    }
+
+    pub fn line_len(&self, line_idx: usize) -> usize {
+        self.content.line(line_idx).len_chars()
+    }
+    
+    pub fn line(&self, line_idx: usize) -> RopeSlice{
+        self.content.line(line_idx)
+    }
+    
+    pub fn char_to_line(&self, char_idx: usize) -> usize {
+        self.content.char_to_line(char_idx)
+    }
+    
+    pub fn byte_slice(&self, start: usize, end: usize) -> RopeSlice {
+        self.content.byte_slice(start..end)
+    }
+    
+    pub fn byte_to_line(&self, byte_idx: usize) -> usize {
+        self.content.byte_to_line(byte_idx)
+    }
+    
+    pub fn byte_to_char(&self, byte_idx: usize) -> usize {
+        self.content.byte_to_char(byte_idx)
     }
     
     pub fn begin_batch(&mut self) {
@@ -89,14 +144,16 @@ impl Code {
             });
         }
         
-        self.edit_tree(InputEdit {
-            start_byte: byte_idx,
-            old_end_byte: byte_idx,
-            new_end_byte: byte_idx + byte_len,
-            start_position: Point { row: 0, column: 0 },
-            old_end_position: Point { row: 0, column: 0 },
-            new_end_position: Point { row: 0, column: 0 },
-        });
+        if self.tree.is_some() {
+            self.edit_tree(InputEdit {
+                start_byte: byte_idx,
+                old_end_byte: byte_idx,
+                new_end_byte: byte_idx + byte_len,
+                start_position: Point { row: 0, column: 0 },
+                old_end_position: Point { row: 0, column: 0 },
+                new_end_position: Point { row: 0, column: 0 },
+            });
+        }
     }
 
     pub fn remove(&mut self, from: usize, to: usize) {
@@ -115,14 +172,17 @@ impl Code {
             });
         }
         
-        self.edit_tree(InputEdit {
-            start_byte: from_byte,
-            old_end_byte: to_byte,
-            new_end_byte: from_byte,
-            start_position: Point { row: 0, column: 0 },
-            old_end_position: Point { row: 0, column: 0 },
-            new_end_position: Point { row: 0, column: 0 },
-        });
+        if self.tree.is_some() {
+            self.edit_tree(InputEdit {
+                start_byte: from_byte,
+                old_end_byte: to_byte,
+                new_end_byte: from_byte,
+                start_position: Point { row: 0, column: 0 },
+                old_end_position: Point { row: 0, column: 0 },
+                new_end_position: Point { row: 0, column: 0 },
+            });
+        }
+       
     }
 
     fn edit_tree(&mut self, edit: InputEdit) {
@@ -150,65 +210,64 @@ impl Code {
         }
     }
 
-    pub fn is_highlightable(&self) -> bool {
+    pub fn is_highlight(&self) -> bool {
         self.query.is_some()
     }
 
-pub fn query_matches(
-    &self, start_line: usize, end_line: usize,  allowed: &Vec<&String>,
-) -> Vec<(usize, usize, String)> {
-    let Some(query) = &self.query else {
-        return vec![];
-    };
-    let Some(tree) = &self.tree else {
-        return vec![];
-    };
-
-    let mut query_cursor = QueryCursor::new();
-    let start_byte = self.content.line_to_byte(start_line);
-    let end_byte = self
-        .content
-        .line_to_byte(end_line.min(self.content.len_lines()));
-
-    query_cursor.set_byte_range(start_byte..end_byte);
-
-    let source = self.content.to_string();
-    let root_node = tree.root_node();
-
-    let mut unsorted: Vec<(usize, usize, usize, String)> = Vec::new(); // include index for sorting
-    let mut query_matches = query_cursor.matches(query, root_node, source.as_bytes());
-
-    while let Some(m) = query_matches.next() {
-        for capture in m.captures {
-            let name = &query.capture_names()[capture.index as usize];
-
-            if !allowed.iter().any(|a| name.contains(*a)) {
-                continue;
+    /// Highlights the interval between `start_line` and `end_line`.
+    /// Returns a list of (start byte, end byte, token_name) for highlighting.
+    pub fn highlight<T: Copy>(
+        &self, start_line: usize, end_line: usize, theme: &HashMap<String, T>,
+    ) -> Vec<(usize, usize, T)> {
+        
+        if start_line > end_line { panic!("invalid range")}
+        let Some(query) = &self.query else { return vec![]; };
+        let Some(tree) = &self.tree else { return vec![]; };
+    
+        let mut query_cursor = QueryCursor::new();
+        let start_byte = self.content.line_to_byte(start_line);
+        let end_byte = self.content
+            .line_to_byte(end_line.min(self.content.len_lines()));
+    
+        query_cursor.set_byte_range(start_byte..end_byte);
+    
+        let root_node = tree.root_node();
+        let capture_names = query.capture_names();
+        
+        let mut query_matches = query_cursor.matches(
+            query, root_node, RopeProvider(self.content.slice(..))
+        );
+    
+        let mut unsorted: Vec<(usize, usize, usize, T)> = Vec::new();
+    
+        while let Some(m) = query_matches.next() {
+            for capture in m.captures {
+                let name = capture_names[capture.index as usize];
+                if let Some(value) = theme.get(name) {
+                    unsorted.push((
+                        capture.node.start_byte(),
+                        capture.node.end_byte(),
+                        capture.index as usize,
+                        *value,
+                    ));
+                }
             }
-
-            unsorted.push((
-                capture.node.start_byte(),
-                capture.node.end_byte(),
-                capture.index as usize, // only for sorting
-                name.to_string(),
-            ));
         }
+    
+        // Sort by length descending, then capture index ascending
+        unsorted.sort_by(|a, b| {
+            let len_a = a.1 - a.0;
+            let len_b = b.1 - b.0;
+            match len_b.cmp(&len_a) {
+                std::cmp::Ordering::Equal => a.2.cmp(&b.2),
+                other => other,
+            }
+        });
+    
+        unsorted.into_iter()
+            .map(|(start, end, _, value)| (start, end, value))
+            .collect()
     }
-
-    // Sort by length descending, then capture.index ascending
-    unsorted.sort_by(|a, b| {
-        let len_a = a.1 - a.0;
-        let len_b = b.1 - b.0;
-        len_b.cmp(&len_a).then(a.2.cmp(&b.2))
-    });
-
-    // Drop capture index from result
-    unsorted
-        .into_iter()
-        .map(|(start, end, _index, name)| (start, end, name))
-        .collect()
-}
-
     
     pub fn undo(&mut self) -> Option<EditBatch> {
         let batch = self.history.undo()?;
@@ -289,15 +348,54 @@ pub fn query_matches(
 
         (start, end)
     }
-
-    pub fn slice(&self, start: usize, end: usize) -> String {
-        self.content.slice(start..end).to_string()
-    }
-
-    pub fn len(&self) -> usize {
-        self.content.len_chars()
+    
+    pub fn indent(&self) -> String {
+        match self.lang.as_str() {
+            "rust" | "javascript" | "typescript" | "python" => {
+                "    ".to_string()
+            },
+            _ => "  ".to_string(),
+        }
     }
 }
+
+/// An iterator over byte slices of Rope chunks.
+/// This is used to feed `tree-sitter` without allocating a full `String`.
+pub struct ChunksBytes<'a> {
+    chunks: ropey::iter::Chunks<'a>,
+}
+
+impl<'a> Iterator for ChunksBytes<'a> {
+    type Item = &'a [u8];
+
+    /// Returns the next chunk as a byte slice.
+    /// Internally converts a `&str` to a `&[u8]` without allocation.
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.chunks.next().map(str::as_bytes)
+    }
+}
+
+/// A lightweight wrapper around a `RopeSlice`
+/// that implements `tree_sitter::TextProvider`.
+/// This allows using `tree-sitter`'s `QueryCursor::matches`
+/// directly on a `Rope` without converting it to a `String`.
+pub struct RopeProvider<'a>(pub RopeSlice<'a>);
+
+impl<'a> tree_sitter::TextProvider<&'a [u8]> for RopeProvider<'a> {
+    type I = ChunksBytes<'a>;
+
+    /// Provides an iterator over chunks of text corresponding to the given node.
+    /// This avoids allocation by working directly with Rope slices.
+    #[inline]
+    fn text(&mut self, node: tree_sitter::Node) -> Self::I {
+        let fragment = self.0.byte_slice(node.start_byte()..node.end_byte());
+        ChunksBytes {
+            chunks: fragment.chunks(),
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
