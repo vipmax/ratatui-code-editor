@@ -17,6 +17,7 @@ use editor::Editor;
 
 mod code;
 mod history;
+mod selection;
 
 fn get_theme() -> Vec<(&'static str, &'static str)> {
     vec![

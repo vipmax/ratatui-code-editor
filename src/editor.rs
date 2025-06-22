@@ -11,6 +11,7 @@ use std::io::Stdout;
 
 use crate::code::Code;
 use crate::history::{Edit, EditKind};
+use crate::selection::Selection;
 
 type Theme = HashMap<String, Style>;
 
@@ -22,6 +23,7 @@ pub struct Editor {
     width: usize,
     height: usize,
     theme: Theme,
+    selection: Option<Selection>,
 }
 
 impl Editor {
@@ -45,6 +47,7 @@ impl Editor {
             width: w,
             height: h,
             theme,
+            selection: None,
         }
     }
     
@@ -53,8 +56,10 @@ impl Editor {
     ) -> anyhow::Result<()> {
         use crossterm::event::KeyCode::*;
 
-        
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+        if ctrl {
             match key.code {
                 Char('z') => self.undo(),
                 Char('y') => self.redo(),
@@ -62,10 +67,10 @@ impl Editor {
             }
         } else {
             match key.code {
-                Left => self.move_left(),
-                Right => self.move_right(),
-                Up => self.move_up(),
-                Down => self.move_down(),
+                Left => self.move_left(shift),
+                Right => self.move_right(shift),
+                Up => self.move_up(shift),
+                Down => self.move_down(shift),
                 Backspace => self.delete_char(),
                 Enter => self.insert_text("\n"),
                 Char(c) => self.insert_text(&c.to_string()),
@@ -77,25 +82,89 @@ impl Editor {
         
         Ok(())
     }
-    
-    pub(crate) fn mouse(
-        &mut self, mouse: MouseEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>
+
+    pub fn mouse(
+        &mut self,
+        mouse: MouseEvent,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> anyhow::Result<()> {
+        let area = terminal.get_frame().area();
+        let pos = self.cursor_from_mouse(mouse.column, mouse.row, area);
+
         match mouse.kind {
-            MouseEventKind::ScrollUp => {
-                self.scroll_up();
-            }
-            MouseEventKind::ScrollDown => {
-                self.scroll_down(terminal.size()?.height as usize);
-            }
+            MouseEventKind::ScrollUp => self.scroll_up(),
+            MouseEventKind::ScrollDown => self.scroll_down(area.height as usize),
+
             MouseEventKind::Down(MouseButton::Left) => {
-                let area = terminal.get_frame().area();
-                self.click(mouse.column, mouse.row, area);
+                if let Some(cursor) = pos {
+                    self.selection = Some(Selection::from_anchor_and_cursor(cursor, cursor));
+                    self.cursor = cursor;
+                }
             }
+
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(cursor) = pos {
+                    let anchor = self.selection_anchor();
+                    self.selection = Some(Selection::from_anchor_and_cursor(anchor, cursor));
+                    self.cursor = cursor;
+                }
+            }
+
             _ => {}
         }
+
         Ok(())
     }
+    
+    fn cursor_from_mouse(&self, mouse_x: u16, mouse_y: u16, area: Rect) -> Option<usize> {
+        let total_lines = self.code.content.len_lines();
+        let max_line_number = total_lines.max(1);
+        let line_number_digits = max_line_number.to_string().len();
+        let line_number_width = (line_number_digits + 2) as u16;
+
+        if mouse_y < area.top()
+            || mouse_y >= area.bottom()
+            || mouse_x < area.left() + line_number_width
+        {
+            return None;
+        }
+
+        let clicked_row = (mouse_y - area.top()) as usize + self.offset_y;
+        if clicked_row >= self.code.content.len_lines() {
+            return None;
+        }
+
+        let clicked_col = (mouse_x - area.left() - line_number_width) as usize;
+        let line = self.code.content.line(clicked_row);
+
+        let mut current_col = 0;
+        let mut char_idx = 0;
+        for ch in line.chars() {
+            let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if current_col + ch_width > clicked_col {
+                break;
+            }
+            current_col += ch_width;
+            char_idx += 1;
+        }
+
+        let line_visual_width: usize = line
+            .chars()
+            .map(|ch| unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0))
+            .sum();
+
+        if clicked_col >= line_visual_width {
+            let mut end_idx = line.len_chars();
+            if end_idx > 0 && line.char(end_idx - 1) == '\n' {
+                end_idx -= 1;
+            }
+            char_idx = end_idx;
+        }
+
+        let line_start = self.code.content.line_to_char(clicked_row);
+        Some(line_start + char_idx)
+    }
+
 
     pub(crate) fn resize(&mut self, w: u16, h: u16) {
         self.width = w as usize;
@@ -119,37 +188,61 @@ impl Editor {
         }
     }
 
-    fn move_left(&mut self) {
+    fn move_left(&mut self, shift: bool) {
         if self.cursor > 0 {
-            self.cursor -= 1;
+            let new_cursor = self.cursor - 1;
+            self.update_selection(new_cursor, shift);
+            self.cursor = new_cursor;
         }
     }
 
-    fn move_right(&mut self) {
+    fn move_right(&mut self, shift: bool) {
         if self.cursor < self.code.content.len_chars() {
-            self.cursor += 1;
+            let new_cursor = self.cursor + 1;
+            self.update_selection(new_cursor, shift);
+            self.cursor = new_cursor;
         }
     }
 
-    fn move_up(&mut self) {
+    fn move_up(&mut self, shift: bool) {
         let (row, col) = self.position();
         if row > 0 {
             let prev_line_start = self.code.content.line_to_char(row - 1);
             let prev_line_len = self.code.content.line(row - 1).len_chars();
             let new_col = col.min(prev_line_len);
-            self.cursor = prev_line_start + new_col;
+            let new_cursor = prev_line_start + new_col;
+            self.update_selection(new_cursor, shift);
+            self.cursor = new_cursor;
         }
     }
 
-    fn move_down(&mut self) {
+    fn move_down(&mut self, shift: bool) {
         let (row, col) = self.position();
         if row + 1 < self.code.content.len_lines() {
             let next_line_start = self.code.content.line_to_char(row + 1);
             let next_line_len = self.code.content.line(row + 1).len_chars();
             let new_col = col.min(next_line_len);
-            self.cursor = next_line_start + new_col;
+            let new_cursor = next_line_start + new_col;
+            self.update_selection(new_cursor, shift);
+            self.cursor = new_cursor;
         }
     }
+    
+    fn update_selection(&mut self, new_cursor: usize, shift: bool) {
+        if shift {
+            let anchor = self.selection_anchor();
+            self.selection = Some(Selection::from_anchor_and_cursor(anchor, new_cursor));
+        } else {
+            self.selection = None;
+        }
+    }
+    fn selection_anchor(&self) -> usize {
+        self.selection
+            .as_ref()
+            .map(|s| if self.cursor == s.start { s.end } else { s.start })
+            .unwrap_or(self.cursor)
+    }
+
 
     fn insert_text(&mut self, text: &str) {
         self.code.begin_batch();
@@ -186,7 +279,6 @@ impl Editor {
             }
         }
     }
-    
     
     fn redo(&mut self) {
         let edits = self.code.redo();
@@ -264,9 +356,11 @@ impl Editor {
         }
 
         let line_start = self.code.content.line_to_char(clicked_row);
-        self.cursor = line_start + char_idx;
-    }
 
+        let new_cursor = line_start + char_idx;
+        self.update_selection(new_cursor, true);
+        self.cursor = new_cursor;
+    }
 
     fn build_theme(theme: &Vec<(&str, &str)>) -> HashMap<String, Style> {
         theme.into_iter()
@@ -296,6 +390,8 @@ impl Widget for &Editor {
 
         let (cursor_line, cursor_char_col) = self.position();
         let mut draw_y = area.top();
+
+        let start_line = self.offset_y;
 
         let mut max_line_number = 0;
 
@@ -345,7 +441,6 @@ impl Widget for &Editor {
                 - and applies the style to each visible character cell in the buffer.
         */
         if self.code.is_highlightable() {
-            let start_line = self.offset_y;
             let end_line = max_line_number + 1;
 
             let allowed = self.theme.keys().collect::<Vec<_>>();
@@ -392,6 +487,52 @@ impl Widget for &Editor {
                 }
             }
         }
+        
+        if let Some(selection) = self.selection {
+            
+            let start = selection.start.min(selection.end);
+            let end = selection.start.max(selection.end);
+        
+            let start_line = self.code.content.char_to_line(start);
+            let end_line = self.code.content.char_to_line(end);
+        
+            for line_idx in start_line..=end_line {
+                if line_idx < self.offset_y {
+                    continue; // not visible
+                }
+                if line_idx >= self.offset_y + area.height as usize {
+                    break; // not visible
+                }
+        
+                let line = self.code.content.line(line_idx);
+                let line_start = self.code.content.line_to_char(line_idx);
+                let line_end = line_start + line.len_chars();
+        
+                let sel_start = start.max(line_start);
+                let sel_end = end.min(line_end);
+        
+                let rel_start = sel_start - line_start;
+                let rel_end = sel_end - line_start;
+        
+                let draw_y = area.top() + (line_idx - self.offset_y) as u16;
+                let mut x = 0;
+                let mut char_idx = 0;
+        
+                for ch in line.chars() {
+                    if char_idx >= rel_start && char_idx < rel_end {
+                        let draw_x = area.left() + line_number_width as u16 + x;
+                        if draw_x < area.right() && draw_y < area.bottom() {
+                            buf[(draw_x, draw_y)]
+                                .set_style(Style::default().bg(Color::DarkGray));
+                        }
+                    }
+        
+                    x += UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
+                    char_idx += 1;
+                }
+            }
+        }
+
 
         // draw the cursor like a block
         if cursor_line >= self.offset_y && cursor_line < self.offset_y + area.height as usize {
