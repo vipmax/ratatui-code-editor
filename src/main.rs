@@ -1,9 +1,13 @@
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode,
+        self, DisableMouseCapture, EnableMouseCapture, 
+        Event, KeyCode, KeyModifiers, KeyEvent
     },
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        EnterAlternateScreen, LeaveAlternateScreen, 
+        disable_raw_mode, enable_raw_mode
+    },
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::stdout;
@@ -12,6 +16,7 @@ mod editor;
 use editor::Editor;
 
 mod code;
+mod history;
 
 fn get_theme() -> Vec<(&'static str, &'static str)> {
     vec![
@@ -30,7 +35,7 @@ fn get_theme() -> Vec<(&'static str, &'static str)> {
         ("function", "#f6c99f"),
         ("function.call", "#f6c99f"),
         ("method", "#f6c99f"),
-        ("macro", "#f6c99f"),
+        ("function.macro", "#f6c99f"),
         ("comment", "#585858"),
         ("namespace", "#f6c99f"),
         ("type", "#f6c99f"),
@@ -67,12 +72,26 @@ fn get_lang(filename: &str) -> String {
 }
 
 
+fn save_to_file(content: &str, path: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(content.as_bytes())?;
+    Ok(())
+}
+
+fn is_save_pressed(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL) &&
+        key.code == KeyCode::Char('s')
+}
+
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let filename = args.get(1).unwrap_or_else(|| {
         eprintln!("Usage: editor <filename>");
         std::process::exit(1);
     });
+    // let filename = "test.rs";
     
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen)?;
@@ -81,8 +100,6 @@ fn main() -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
-
-    
     let language = get_lang(filename);
 
     let content = std::fs::read_to_string(filename)?;
@@ -104,6 +121,9 @@ fn main() -> anyhow::Result<()> {
                 Event::Key(key) => {
                     if key.code == KeyCode::Esc {
                         break;
+                    } else if is_save_pressed(key) {
+                        let content = editor.get_content();
+                        save_to_file(&content, filename)?;
                     } else {
                         editor.input(key)?;
                     }

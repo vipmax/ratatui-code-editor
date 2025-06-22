@@ -53,6 +53,10 @@
 ; Variables
 ; ---
 
+(type_identifier) @type
+(identifier) @variable
+(field_identifier) @variable.other.member
+
 (let_declaration
   pattern: [
     ((identifier) @variable)
@@ -80,25 +84,25 @@
 ((identifier) @keyword.control
   (#match? @keyword.control "^yield$"))
 
-"in" @keyword.control
+"in" @keyword
 
 [
   "match"
   "if"
   "else"
-] @keyword.control.conditional
+] @keyword
 
 [
   "while"
   "loop"
-] @keyword.control.repeat
+] @keyword
 
 [
   "break"
   "continue"
   "return"
   "await"
-] @keyword.control.return
+] @keyword
 
 "use" @keyword
 (mod_item "mod" @keyword.control.import !body)
@@ -128,11 +132,11 @@
   "enum"
   "union"
   "type"
-] @keyword.storage.type
+] @keyword
 
-"let" @keyword.storage
-"fn" @keyword.function
-"unsafe" @keyword.special
+"let" @keyword
+"fn" @keyword
+"unsafe" @keyword
 "macro_rules!" @function.macro
 
 (mutable_specifier) @keyword.storage.modifier.mut
@@ -146,7 +150,7 @@
   "ref"
   "move"
   "dyn"
-] @keyword.storage.modifier
+] @keyword
 
 ; TODO: variable.mut to highlight mutable identifiers via locals.scm
 
@@ -296,7 +300,3 @@
 ; -------
 
 "?" @special
-
-(type_identifier) @type
-(identifier) @variable
-(field_identifier) @variable.other.member

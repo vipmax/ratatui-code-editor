@@ -1,6 +1,6 @@
 use crossterm::event::{
-    KeyEvent, MouseEvent, MouseEventKind, MouseButton
-    };
+    KeyEvent, MouseEvent, MouseEventKind, MouseButton, KeyModifiers
+};
 use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::{prelude::*, widgets::Widget};
@@ -10,16 +10,17 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::Stdout;
 
 use crate::code::Code;
+use crate::history::{Edit, EditKind};
 
 type Theme = HashMap<String, Style>;
 
 pub struct Editor {
-    pub name: String,
-    pub code: Code,
-    pub cursor: usize,
-    pub offset_y: usize,
-    pub width: usize,
-    pub height: usize,
+    name: String,
+    code: Code,
+    cursor: usize,
+    offset_y: usize,
+    width: usize,
+    height: usize,
     theme: Theme,
 }
 
@@ -43,7 +44,7 @@ impl Editor {
             offset_y: 0,
             width: w,
             height: h,
-            theme
+            theme,
         }
     }
     
@@ -52,18 +53,28 @@ impl Editor {
     ) -> anyhow::Result<()> {
         use crossterm::event::KeyCode::*;
 
-        match key.code {
-            Left => self.move_left(),
-            Right => self.move_right(),
-            Up => self.move_up(),
-            Down => self.move_down(),
-            Backspace => self.delete_char(),
-            Enter => self.insert_text("\n"),
-            Char(c) => self.insert_text(&c.to_string()),
-            _ => {}
-        }
         
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                Char('z') => self.undo(),
+                Char('y') => self.redo(),
+                _ => {}
+            }
+        } else {
+            match key.code {
+                Left => self.move_left(),
+                Right => self.move_right(),
+                Up => self.move_up(),
+                Down => self.move_down(),
+                Backspace => self.delete_char(),
+                Enter => self.insert_text("\n"),
+                Char(c) => self.insert_text(&c.to_string()),
+                _ => {}
+            }
+        }
         self.scroll_to_cursor();
+        
+        
         Ok(())
     }
     
@@ -141,7 +152,9 @@ impl Editor {
     }
 
     fn insert_text(&mut self, text: &str) {
+        self.code.begin_batch();
         self.code.insert(self.cursor, text);
+        self.code.commit_batch();
         self.cursor += text.chars().count();
     }
 
@@ -152,8 +165,43 @@ impl Editor {
     }
 
     fn delete_text(&mut self, from: usize, to: usize) {
+        self.code.begin_batch();
         self.code.remove(from, to);
+        self.code.commit_batch();
         self.cursor = from;
+    }
+    
+    fn undo(&mut self) {
+        let edits = self.code.undo();
+        if let Some(edits) = edits {
+            for edit in edits.iter().rev()  {
+                match &edit.kind {
+                    EditKind::Insert { offset, text } => {
+                        self.cursor = *offset;
+                    }
+                    EditKind::Remove { offset, text } => {
+                        self.cursor = *offset + text.chars().count();
+                    }
+                }
+            }
+        }
+    }
+    
+    
+    fn redo(&mut self) {
+        let edits = self.code.redo();
+        if let Some(edits) = edits {
+            for edit in edits {
+                match &edit.kind {
+                    EditKind::Insert { offset, text } => {
+                        self.cursor = *offset + text.chars().count();
+                    }
+                    EditKind::Remove { offset, text } => {
+                        self.cursor = *offset;
+                    }
+                }
+            }
+        }
     }
 
     pub fn scroll_up(&mut self) {
@@ -232,6 +280,10 @@ impl Editor {
             })
             .collect()
     }
+    
+    pub fn get_content(&self) -> String {
+        self.code.content.to_string()
+    }
 
 }
 
@@ -283,81 +335,60 @@ impl Widget for &Editor {
             max_line_number = line_idx;
         }
 
-        if self.code.is_highlighted() {
-            // code highlighting over the text
+        /*
+            This code block is responsible for rendering syntax highlighting within the visible area of the editor.
+            The editor retrieves all relevant syntax captures (query_matches) within the visible line range. 
+            For each capture, it:
+                - gets the corresponding style from the theme,
+                - converts byte positions to screen coordinates,
+                - iterates over each character in the captured range,
+                - and applies the style to each visible character cell in the buffer.
+        */
+        if self.code.is_highlightable() {
             let start_line = self.offset_y;
             let end_line = max_line_number + 1;
 
             let allowed = self.theme.keys().collect::<Vec<_>>();
-
             let matches = self.code.query_matches(start_line, end_line, &allowed);
 
-            for (_, _, start_pos, end_pos, capture_name) in matches {
-                // check if the capture is visible in the area
-                if end_pos.row < start_line || start_pos.row >= end_line {
-                    continue;
-                }
-
+            for (start_byte, end_byte, capture_name) in matches {
                 let style = match self.theme.get(&capture_name) {
-                    Some(s) => *s,
-                    None => continue,
+                    Some(s) => *s, None => continue,
                 };
+                let start_offset = self.code.content.byte_to_char(start_byte);
+                let end_offset = self.code.content.byte_to_char(end_byte);
 
-                for line_idx in start_pos.row..=end_pos.row {
-                    if line_idx < start_line {
+                let start_line_idx = self.code.content.byte_to_line(start_byte);
+                let end_line_idx = self.code.content.byte_to_line(end_byte);
+
+                let start_line_offset = self.code.content.line_to_char(start_line_idx);
+                let end_line_offset = self.code.content.line_to_char(end_line_idx);
+
+                let start_col = start_offset - start_line_offset;
+                let end_col = end_offset - start_line_offset;
+
+                let content = self.code.content.byte_slice(start_byte..end_byte).to_string();
+
+                let mut x = start_col;
+                let mut y = start_line_idx;
+
+                for ch in content.chars() {
+                    if ch == '\n' { y += 1; x = 0; continue; }
+
+                    let not_visible = y < self.offset_y || y >= self.offset_y + area.height as usize;
+                    if not_visible {
+                        x += UnicodeWidthChar::width(ch).unwrap_or(0);
                         continue;
                     }
-                    let draw_y = area.top() + (line_idx - start_line) as u16;
-                    if draw_y >= area.bottom() {
-                        break;
+
+                    let draw_y = area.top() + (y - self.offset_y) as u16;
+                    let draw_x = area.left() + line_number_width as u16 + x as u16;
+
+                    if draw_x < area.left() + area.width && draw_y < area.top() + area.height {
+                        buf[(draw_x, draw_y)].set_style(style);
                     }
 
-                    let line = self.code.content.line(line_idx);
-                    let line_len = line.len_chars();
-                    let max_text_width = (area.width as usize).saturating_sub(line_number_width);
-                    let line_str: String = line.chars().take(max_text_width).collect();
-
-                    let start_col = if line_idx == start_pos.row {
-                        start_pos.column
-                    } else {
-                        0
-                    };
-
-                    let end_col = if line_idx == end_pos.row {
-                        end_pos.column
-                    } else {
-                        line_len.min(max_text_width)
-                    };
-
-                    // calculate the width of each character
-                    let mut current_width = 0;
-                    let mut start_x = None;
-                    let mut end_x = None;
-                    for (i, ch) in line_str.chars().enumerate() {
-                        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
-                        if i == start_col {
-                            start_x = Some(current_width);
-                        }
-                        if i == end_col {
-                            end_x = Some(current_width);
-                            break;
-                        }
-                        current_width += w;
-                    }
-
-                    if end_x.is_none() {
-                        end_x = Some(current_width);
-                    }
-
-                    if let (Some(start_x), Some(end_x)) = (start_x, end_x) {
-                        let base_x = area.left() + line_number_width as u16;
-                        for x in start_x..end_x {
-                            let pos_x = base_x + x as u16;
-                            if pos_x < area.left() + area.width && draw_y < area.top() + area.height {
-                                buf[(pos_x, draw_y)].set_style(style);
-                            }
-                        }
-                    }
+                    x += UnicodeWidthChar::width(ch).unwrap_or(0);
                 }
             }
         }
