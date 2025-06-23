@@ -74,10 +74,10 @@ impl Code {
         (row, col)
     }
     
-    
     pub fn get_content(&self) -> String {
         self.content.to_string()
     }
+    
     pub fn slice(&self, start: usize, end: usize) -> String {
         self.content.slice(start..end).to_string()
     }
@@ -93,6 +93,9 @@ impl Code {
     pub fn line_to_char(&self, line_idx: usize) -> usize {
         self.content.line_to_char(line_idx)
     }
+    pub fn char_to_byte(&self, char_idx: usize) -> usize {
+        self.content.char_to_byte(char_idx)
+    }
 
     pub fn line_len(&self, line_idx: usize) -> usize {
         self.content.line(line_idx).len_chars()
@@ -104,6 +107,10 @@ impl Code {
     
     pub fn char_to_line(&self, char_idx: usize) -> usize {
         self.content.char_to_line(char_idx)
+    }
+    
+    pub fn char_slice(&self, start: usize, end: usize) -> RopeSlice {
+        self.content.slice(start..end)
     }
     
     pub fn byte_slice(&self, start: usize, end: usize) -> RopeSlice {
@@ -224,11 +231,67 @@ impl Code {
         let Some(query) = &self.query else { return vec![]; };
         let Some(tree) = &self.tree else { return vec![]; };
     
-        let mut query_cursor = QueryCursor::new();
         let start_byte = self.content.line_to_byte(start_line);
-        let end_byte = self.content
-            .line_to_byte(end_line.min(self.content.len_lines()));
+        let end_byte = self.content.line_to_byte(end_line.min(self.content.len_lines()));
     
+        let mut query_cursor = QueryCursor::new();
+        query_cursor.set_byte_range(start_byte..end_byte);
+        query_cursor.set_match_limit(100);
+    
+        let root_node = tree.root_node();
+        let capture_names = query.capture_names();
+        
+        let mut query_matches = query_cursor.matches(
+            query, root_node, RopeProvider(self.content.slice(..))
+        );
+    
+        let mut unsorted: Vec<(usize, usize, usize, T)> = Vec::new();
+    
+        while let Some(m) = query_matches.next() {
+            for capture in m.captures {
+                let name = capture_names[capture.index as usize];
+                if let Some(value) = theme.get(name) {
+                    unsorted.push((
+                        capture.node.start_byte(),
+                        capture.node.end_byte(),
+                        capture.index as usize,
+                        *value,
+                    ));
+                }
+            }
+        }
+    
+        // Sort by length descending, then capture index ascending
+        unsorted.sort_by(|a, b| {
+            let len_a = a.1 - a.0;
+            let len_b = b.1 - b.0;
+            match len_b.cmp(&len_a) {
+                std::cmp::Ordering::Equal => a.2.cmp(&b.2),
+                other => other,
+            }
+        });
+    
+        unsorted.into_iter()
+            .map(|(start, end, _, value)| (start, end, value))
+            .take(1000)
+            .collect()
+    }
+    
+    
+    /// Highlights the interval between `start` and `end` char indices.
+    /// Returns a list of (start byte, end byte, token_name) for highlighting.
+    pub fn highlight_interval<T: Copy>(
+        &self, start: usize, end: usize, theme: &HashMap<String, T>,
+    ) -> Vec<(usize, usize, T)> {
+        
+        if start > start { panic!("invalid range")}
+        let Some(query) = &self.query else { return vec![]; };
+        let Some(tree) = &self.tree else { return vec![]; };
+    
+        let start_byte = self.content.char_to_byte(start);
+        let end_byte = self.content.char_to_byte(end);
+    
+        let mut query_cursor = QueryCursor::new();
         query_cursor.set_byte_range(start_byte..end_byte);
     
         let root_node = tree.root_node();
@@ -266,6 +329,7 @@ impl Code {
     
         unsorted.into_iter()
             .map(|(start, end, _, value)| (start, end, value))
+            .take(1000)
             .collect()
     }
     

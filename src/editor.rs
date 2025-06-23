@@ -517,52 +517,108 @@ impl Widget for &Editor {
                 - converts byte positions to screen coordinates,
                 - iterates over each character in the captured range,
                 - and applies the style to each visible character cell in the buffer.
+            advantage: fast and easy  
+            disadvantage: this one works bad for wide lines  
         */
         if self.code.is_highlight() {
-            let end_line = max_line_number + 1;
+        //     let end_line = max_line_number + 1;
 
-            
-            let highlights = self.code.highlight(start_line, end_line, &self.theme);
+        //     let highlights = self.code.highlight(start_line, end_line, &self.theme);
 
-            for (start_byte, end_byte, style) in highlights {
+        //     for (start_byte, end_byte, style) in highlights {
                
-                let start_offset = self.code.byte_to_char(start_byte);
-                let end_offset = self.code.byte_to_char(end_byte);
+        //         let start_offset = self.code.byte_to_char(start_byte);
+        //         let end_offset = self.code.byte_to_char(end_byte);
 
-                let start_line_idx = self.code.byte_to_line(start_byte);
-                let end_line_idx = self.code.byte_to_line(end_byte);
+        //         let start_line_idx = self.code.byte_to_line(start_byte);
+        //         let end_line_idx = self.code.byte_to_line(end_byte);
 
-                let start_line_offset = self.code.line_to_char(start_line_idx);
-                let end_line_offset = self.code.line_to_char(end_line_idx);
+        //         let start_line_offset = self.code.line_to_char(start_line_idx);
+        //         let end_line_offset = self.code.line_to_char(end_line_idx);
 
-                let start_col = start_offset - start_line_offset;
-                let end_col = end_offset - start_line_offset;
+        //         let start_col = start_offset - start_line_offset;
+        //         let end_col = end_offset - start_line_offset;
 
-                let content = self.code.byte_slice(start_byte, end_byte).to_string();
+        //         let content = self.code.byte_slice(start_byte, end_byte).to_string();
 
-                let mut x = start_col;
-                let mut y = start_line_idx;
+        //         let mut x = start_col;
+        //         let mut y = start_line_idx;
 
-                for ch in content.chars() {
-                    if ch == '\n' { y += 1; x = 0; continue; }
+        //         for ch in content.chars() {
+        //             if ch == '\n' { y += 1; x = 0; continue; }
 
-                    let not_visible = y < self.offset_y || y >= self.offset_y + area.height as usize;
-                    if not_visible {
-                        x += UnicodeWidthChar::width(ch).unwrap_or(0);
-                        continue;
-                    }
+        //             let not_visible = y < self.offset_y || y >= self.offset_y + area.height as usize;
+        //             if not_visible {
+        //                 x += UnicodeWidthChar::width(ch).unwrap_or(0);
+        //                 continue;
+        //             }
 
-                    let draw_y = area.top() + (y - self.offset_y) as u16;
+        //             let draw_y = area.top() + (y - self.offset_y) as u16;
+        //             let draw_x = area.left() + line_number_width as u16 + x as u16;
+
+        //             if draw_x < area.left() + area.width && draw_y < area.top() + area.height {
+        //                 buf[(draw_x, draw_y)].set_style(style);
+        //             }
+
+        //             x += UnicodeWidthChar::width(ch).unwrap_or(0);
+        //         }
+        //     }        
+        
+        
+            // Render syntax highlighting for the visible portion of the text buffer.
+            // For each visible line within the viewport, limit the highlighting to the
+            // visible columns to avoid expensive processing of long lines outside the view.
+            // This improves performance by only querying Tree-sitter for the visible slice,
+            // then applying styles per character based on byte ranges returned by the syntax query.
+            
+            for screen_y in 0..(area.height as usize) {
+                let line_idx = self.offset_y + screen_y;
+                if line_idx >= self.code.len_lines() { break }
+                
+                let line_len = self.code.line_len(line_idx);
+                let max_x = (area.width as usize).saturating_sub(line_number_width);
+                let end = max_x.min(line_len);
+                
+                let line_start_char = self.code.line_to_char(line_idx);
+                let line_end_char = line_start_char + end;
+                
+                let chars = self.code.char_slice(line_start_char, line_end_char);
+
+                let start_byte = self.code.char_to_byte(line_start_char);
+                let end_byte = self.code.char_to_byte(line_end_char);
+        
+                let highlights = self.code.highlight_interval(
+                    line_start_char, line_end_char, &self.theme
+                );
+
+                let mut x = 0;
+                let mut byte_idx_in_rope = start_byte;
+                    
+                for ch in chars.chars().take(max_x) {
+                    if x >= area.width as usize { break }
+        
+                    let ch_width = UnicodeWidthChar::width(ch).unwrap_or(1);
+                    let ch_len = ch.len_utf8();
+        
                     let draw_x = area.left() + line_number_width as u16 + x as u16;
-
-                    if draw_x < area.left() + area.width && draw_y < area.top() + area.height {
-                        buf[(draw_x, draw_y)].set_style(style);
+                    let draw_y = area.top() + screen_y as u16;
+        
+                    let mut style = Style::default();
+                    for &(start, end, s) in &highlights {
+                        if start <= byte_idx_in_rope && byte_idx_in_rope < end {
+                            style = s;
+                            break;
+                        }
                     }
-
-                    x += UnicodeWidthChar::width(ch).unwrap_or(0);
+        
+                    buf[(draw_x, draw_y)].set_style(style);
+        
+                    x += ch_width;
+                    byte_idx_in_rope += ch_len;
                 }
             }
         }
+
 
         if let Some(selection) = self.selection {
 
