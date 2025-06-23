@@ -5,6 +5,7 @@ use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::{prelude::*, widgets::Widget};
 use std::collections::HashMap;
+use std::f32::DIGITS;
 use unicode_width::UnicodeWidthChar;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::Stdout;
@@ -18,6 +19,7 @@ pub struct Editor {
     code: Code,
     cursor: usize,
     offset_y: usize,
+    offset_x: usize,
     width: usize,
     height: usize,
     theme: HashMap<String, Style>,
@@ -43,6 +45,7 @@ impl Editor {
             code,
             cursor: 0,
             offset_y: 0,
+            offset_x: 0,
             width: w,
             height: h,
             theme,
@@ -52,11 +55,16 @@ impl Editor {
         }
     }
 
-    pub fn input(&mut self, key: KeyEvent) -> anyhow::Result<()> {
+    pub fn input(
+        &mut self, 
+        key: KeyEvent,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> anyhow::Result<()> {
         use crossterm::event::KeyCode::*;
 
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
 
         match key.code {
             Char('z') if ctrl => self.handle_undo(),
@@ -67,6 +75,8 @@ impl Editor {
             Char('k') if ctrl => self.handle_delete_line(),
             Char('d') if ctrl => self.handle_duplicate()?,
 
+            Char('w') if ctrl  => { self.offset_x += 1; },
+            Char('q') if ctrl  => { self.offset_x = self.offset_x.saturating_sub(1); },
             Left        => self.handle_left(shift),
             Right       => self.handle_right(shift),
             Up          => self.handle_up(shift),
@@ -77,10 +87,40 @@ impl Editor {
             Tab         => self.handle_tab(),
             _ => {}
         }
-
-        self.scroll_to_cursor();
+        
+        let area = terminal.size()?;
+        let width = area.width as usize;
+        let height = area.height as usize;
+        let total_lines = self.code.len_lines();
+        let max_line_number = total_lines.max(1);
+        let line_number_digits = max_line_number.to_string().len();
+        let line_number_width = line_number_digits + 2;
+        
+        self.focus(width, height, line_number_width);
+        
         Ok(())
     }
+    
+    fn focus(&mut self, width: usize, height: usize, line_number_width: usize) {
+        let line = self.code.char_to_line(self.cursor);
+        let col = self.cursor - self.code.line_to_char(line);
+    
+        let visible_width = width.saturating_sub(line_number_width);
+        let visible_height = height;
+    
+        if col < self.offset_x {
+            self.offset_x = col;
+        } else if col >= self.offset_x + visible_width {
+            self.offset_x = col.saturating_sub(visible_width - 1);
+        }
+    
+        if line < self.offset_y {
+            self.offset_y = line;
+        } else if line >= self.offset_y + visible_height {
+            self.offset_y = line.saturating_sub(visible_height - 1);
+        }
+    }
+
 
     pub fn mouse(
         &mut self,
@@ -151,25 +191,36 @@ impl Editor {
         let max_line_number = total_lines.max(1);
         let line_number_digits = max_line_number.to_string().len();
         let line_number_width = (line_number_digits + 2) as u16;
-
+    
         if mouse_y < area.top()
             || mouse_y >= area.bottom()
             || mouse_x < area.left() + line_number_width
         {
             return None;
         }
-
+    
         let clicked_row = (mouse_y - area.top()) as usize + self.offset_y;
         if clicked_row >= self.code.len_lines() {
             return None;
         }
-
+    
         let clicked_col = (mouse_x - area.left() - line_number_width) as usize;
-        let line = self.code.line(clicked_row);
-
+    
+        let line_start_char = self.code.line_to_char(clicked_row);
+        let line_len = self.code.line_len(clicked_row);
+    
+        let start_col = self.offset_x.min(line_len);
+        let end_col = line_len;
+    
+        let char_start = line_start_char + start_col;
+        let char_end = line_start_char + end_col;
+    
+        let visible_chars = self.code.char_slice(char_start, char_end);
+    
         let mut current_col = 0;
-        let mut char_idx = 0;
-        for ch in line.chars() {
+        let mut char_idx = start_col;
+    
+        for ch in visible_chars.chars() {
             let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
             if current_col + ch_width > clicked_col {
                 break;
@@ -177,37 +228,13 @@ impl Editor {
             current_col += ch_width;
             char_idx += 1;
         }
-
-        let line_visual_width: usize = line.chars()
-            .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0))
-            .sum();
-
-        if clicked_col >= line_visual_width {
-            let mut end_idx = line.len_chars();
-            if end_idx > 0 && line.char(end_idx - 1) == '\n' {
-                end_idx -= 1;
-            }
-            char_idx = end_idx;
-        }
-
-        let line_start = self.code.line_to_char(clicked_row);
-        Some(line_start + char_idx)
+    
+        Some(self.code.line_to_char(clicked_row) + char_idx)
     }
-
 
     pub(crate) fn resize(&mut self, w: u16, h: u16) {
         self.width = w as usize;
         self.height = h as usize;
-    }
-
-    fn scroll_to_cursor(&mut self) {
-        let (cursor_row, _) = self.code.point(self.cursor);
-
-        if cursor_row >= self.offset_y + self.height {
-            self.offset_y = cursor_row - self.height + 1;
-        } else if cursor_row < self.offset_y {
-            self.offset_y = cursor_row;
-        }
     }
 
     fn handle_left(&mut self, shift: bool) {
@@ -468,102 +495,40 @@ impl Widget for &Editor {
 
         let (cursor_line, cursor_char_col) = self.code.point(self.cursor);
         let mut draw_y = area.top();
-
-        let start_line = self.offset_y;
-
-        let mut max_line_number = 0;
+        
+        let line_number_style = Style::default().fg(Color::DarkGray);
+        let default_text_style = Style::default().fg(Color::White);
 
         // draw line numbers and text
         for line_idx in self.offset_y..total_lines {
-            if draw_y >= area.bottom() {
-                break;
-            }
-
-            let line = self.code.line(line_idx);
-
+            if draw_y >= area.bottom() { break }
+        
             let line_number = format!("{:>width$}  ", line_idx + 1, width = line_number_digits);
-
-            if area.left() < area.left() + area.width && draw_y < area.top() + area.height {
-                buf.set_string(
-                    area.left(),
-                    draw_y,
-                    &line_number,
-                    Style::default().fg(Color::DarkGray),
-                );
-            }
-
-            let max_text_width = (area.width as usize).saturating_sub(line_number_width);
-            let displayed_line: String = line.chars().take(max_text_width).collect();
-
+            buf.set_string(area.left(), draw_y, &line_number, line_number_style);
+        
+            let line_len = self.code.line_len(line_idx);
+            let max_x = (area.width as usize).saturating_sub(line_number_width);
+        
+            let start_col = self.offset_x.min(line_len);
+            let end_col = (start_col + max_x).min(line_len);
+        
+            let line_start_char = self.code.line_to_char(line_idx);
+            let char_start = line_start_char + start_col;
+            let char_end = line_start_char + end_col;
+        
+            let visible_chars = self.code.char_slice(char_start, char_end);
+            let displayed_line = visible_chars.to_string();
+        
             let text_x = area.left() + line_number_width as u16;
             if text_x < area.left() + area.width && draw_y < area.top() + area.height {
-                buf.set_string(
-                    text_x,
-                    draw_y,
-                    &displayed_line,
-                    Style::default().fg(Color::White),
-                );
+                buf.set_string(text_x, draw_y, &displayed_line, default_text_style);
             }
-
+        
             draw_y += 1;
-            max_line_number = line_idx;
         }
 
-        /*
-            This code block is responsible for rendering syntax highlighting within the visible area of the editor.
-            The editor retrieves all relevant syntax captures (query_matches) within the visible line range.
-            For each capture, it:
-                - gets the corresponding style from the theme,
-                - converts byte positions to screen coordinates,
-                - iterates over each character in the captured range,
-                - and applies the style to each visible character cell in the buffer.
-            advantage: fast and easy  
-            disadvantage: this one works bad for wide lines  
-        */
+        // draw syntax highlighting
         if self.code.is_highlight() {
-        //     let end_line = max_line_number + 1;
-
-        //     let highlights = self.code.highlight(start_line, end_line, &self.theme);
-
-        //     for (start_byte, end_byte, style) in highlights {
-               
-        //         let start_offset = self.code.byte_to_char(start_byte);
-        //         let end_offset = self.code.byte_to_char(end_byte);
-
-        //         let start_line_idx = self.code.byte_to_line(start_byte);
-        //         let end_line_idx = self.code.byte_to_line(end_byte);
-
-        //         let start_line_offset = self.code.line_to_char(start_line_idx);
-        //         let end_line_offset = self.code.line_to_char(end_line_idx);
-
-        //         let start_col = start_offset - start_line_offset;
-        //         let end_col = end_offset - start_line_offset;
-
-        //         let content = self.code.byte_slice(start_byte, end_byte).to_string();
-
-        //         let mut x = start_col;
-        //         let mut y = start_line_idx;
-
-        //         for ch in content.chars() {
-        //             if ch == '\n' { y += 1; x = 0; continue; }
-
-        //             let not_visible = y < self.offset_y || y >= self.offset_y + area.height as usize;
-        //             if not_visible {
-        //                 x += UnicodeWidthChar::width(ch).unwrap_or(0);
-        //                 continue;
-        //             }
-
-        //             let draw_y = area.top() + (y - self.offset_y) as u16;
-        //             let draw_x = area.left() + line_number_width as u16 + x as u16;
-
-        //             if draw_x < area.left() + area.width && draw_y < area.top() + area.height {
-        //                 buf[(draw_x, draw_y)].set_style(style);
-        //             }
-
-        //             x += UnicodeWidthChar::width(ch).unwrap_or(0);
-        //         }
-        //     }        
-        
         
             // Render syntax highlighting for the visible portion of the text buffer.
             // For each visible line within the viewport, limit the highlighting to the
@@ -574,35 +539,35 @@ impl Widget for &Editor {
             for screen_y in 0..(area.height as usize) {
                 let line_idx = self.offset_y + screen_y;
                 if line_idx >= self.code.len_lines() { break }
-                
+            
                 let line_len = self.code.line_len(line_idx);
                 let max_x = (area.width as usize).saturating_sub(line_number_width);
-                let end = max_x.min(line_len);
-                
+            
                 let line_start_char = self.code.line_to_char(line_idx);
-                let line_end_char = line_start_char + end;
-                
-                let chars = self.code.char_slice(line_start_char, line_end_char);
-
-                let start_byte = self.code.char_to_byte(line_start_char);
-                let end_byte = self.code.char_to_byte(line_end_char);
-        
+                let start_char = line_start_char + self.offset_x;
+                let visible_len = line_len.saturating_sub(self.offset_x);
+                let end = max_x.min(visible_len);
+                let end_char = start_char + end;
+            
+                let chars = self.code.char_slice(start_char, end_char);
+                let start_byte = self.code.char_to_byte(start_char);
+            
                 let highlights = self.code.highlight_interval(
-                    line_start_char, line_end_char, &self.theme
+                    start_char, end_char, &self.theme
                 );
-
+            
                 let mut x = 0;
                 let mut byte_idx_in_rope = start_byte;
-                    
+            
                 for ch in chars.chars().take(max_x) {
-                    if x >= area.width as usize { break }
-        
+                    if x >= max_x { break }
+            
                     let ch_width = UnicodeWidthChar::width(ch).unwrap_or(1);
                     let ch_len = ch.len_utf8();
-        
+            
                     let draw_x = area.left() + line_number_width as u16 + x as u16;
                     let draw_y = area.top() + screen_y as u16;
-        
+            
                     let mut style = Style::default();
                     for &(start, end, s) in &highlights {
                         if start <= byte_idx_in_rope && byte_idx_in_rope < end {
@@ -610,79 +575,93 @@ impl Widget for &Editor {
                             break;
                         }
                     }
-        
+            
                     buf[(draw_x, draw_y)].set_style(style);
-        
+            
                     x += ch_width;
                     byte_idx_in_rope += ch_len;
                 }
             }
+
         }
 
-
+        //draw selection
         if let Some(selection) = self.selection {
-
             let start = selection.start.min(selection.end);
             let end = selection.start.max(selection.end);
-
+        
             let start_line = self.code.char_to_line(start);
             let end_line = self.code.char_to_line(end);
-
+        
             for line_idx in start_line..=end_line {
-                if line_idx < self.offset_y {
-                    continue; // not visible
-                }
-                if line_idx >= self.offset_y + area.height as usize {
-                    break; // not visible
-                }
-
-                let line = self.code.line(line_idx);
-                let line_start = self.code.line_to_char(line_idx);
-                let line_end = line_start + line.len_chars();
-
-                let sel_start = start.max(line_start);
-                let sel_end = end.min(line_end);
-
-                let rel_start = sel_start - line_start;
-                let rel_end = sel_end - line_start;
-
+                if line_idx < self.offset_y { continue }
+                if line_idx >= self.offset_y + area.height as usize { break }
+        
+                let line_start_char = self.code.line_to_char(line_idx);
+                let line_len = self.code.line_len(line_idx);
+                let line_end_char = line_start_char + line_len;
+        
+                let sel_start = start.max(line_start_char);
+                let sel_end = end.min(line_end_char);
+        
+                let rel_start = sel_start - line_start_char;
+                let rel_end = sel_end - line_start_char;
+        
+                let start_col = self.offset_x.min(line_len);
+                let max_text_width = (area.width as usize).saturating_sub(line_number_width);
+                let end_col = (start_col + max_text_width).min(line_len);
+        
+                let char_slice_start = line_start_char + start_col;
+                let char_slice_end = line_start_char + end_col;
+        
+                let visible_chars = self.code.char_slice(char_slice_start, char_slice_end);
+        
                 let draw_y = area.top() + (line_idx - self.offset_y) as u16;
-                let mut x = 0;
-                let mut char_idx = 0;
-
-                for ch in line.chars() {
-                    if char_idx >= rel_start && char_idx < rel_end {
-                        let draw_x = area.left() + line_number_width as u16 + x;
+                let mut visual_x = 0;
+                let mut char_col = start_col;
+        
+                for ch in visible_chars.chars() {
+                    if char_col >= rel_start && char_col < rel_end {
+                        let draw_x = area.left() + line_number_width as u16 + visual_x;
                         if draw_x < area.right() && draw_y < area.bottom() {
-                            buf[(draw_x, draw_y)]
-                                .set_style(Style::default().bg(Color::DarkGray));
+                            buf[(draw_x, draw_y)].set_style(Style::default().bg(Color::DarkGray));
                         }
                     }
-
-                    x += UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
-                    char_idx += 1;
+        
+                    visual_x += UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
+                    char_col += 1;
                 }
             }
         }
 
-
-        // draw the cursor like a block
+        // draw cursor
         if cursor_line >= self.offset_y && cursor_line < self.offset_y + area.height as usize {
-            let line = self.code.line(cursor_line);
-            let max_text_width = (area.width as usize).saturating_sub(line_number_width);
-            let cursor_visual_col = line
-                .chars()
-                .take(cursor_char_col)
-                .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0))
-                .sum::<usize>()
-                .min(max_text_width);
-
-            let cursor_x = area.left() + line_number_width as u16 + cursor_visual_col as u16;
+            let line_start_char = self.code.line_to_char(cursor_line);
+            let line_len = self.code.line_len(cursor_line);
+        
+            let max_x = (area.width as usize).saturating_sub(line_number_width);
+            let start_col = self.offset_x;
+                
+            let cursor_visual_col: usize = self.code
+                .char_slice(line_start_char, line_start_char + cursor_char_col.min(line_len))
+                .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0)).sum();
+        
+            let offset_visual_col: usize = self.code
+                .char_slice(line_start_char, line_start_char + start_col.min(line_len))
+                .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0)).sum();
+        
+            let relative_visual_col = cursor_visual_col.saturating_sub(offset_visual_col);
+            let visible_x = relative_visual_col.min(max_x);
+        
+            let cursor_x = area.left() + line_number_width as u16 + visible_x as u16;
             let cursor_y = area.top() + (cursor_line - self.offset_y) as u16;
-
-            if cursor_x < area.left() + area.width && cursor_y < area.top() + area.height {
-                buf[(cursor_x, cursor_y)].set_style(Style::default().bg(Color::White).fg(Color::Black));
+        
+            if cursor_x < area.right() && cursor_y < area.bottom() {
+                buf[(cursor_x, cursor_y)].set_style(
+                    Style::default().bg(Color::White).fg(Color::Black)
+                );
             }
         }
+
     }
 }

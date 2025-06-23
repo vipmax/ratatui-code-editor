@@ -126,7 +126,7 @@ fn main() -> anyhow::Result<()> {
                         let content = editor.get_content();
                         save_to_file(&content, filename)?;
                     } else {
-                        editor.input(key)?;
+                        editor.input(key, &mut terminal)?;
                     }
                 }
                 Event::Mouse(mouse) => {
