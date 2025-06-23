@@ -229,7 +229,20 @@ impl Editor {
             char_idx += 1;
         }
     
-        Some(self.code.line_to_char(clicked_row) + char_idx)
+        let line = self.code.char_slice(line_start_char, line_start_char + line_len);
+        let visual_width: usize = line.chars()
+            .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0))
+            .sum();
+    
+        if clicked_col + self.offset_x >= visual_width {
+            let mut end_idx = line.len_chars();
+            if end_idx > 0 && line.char(end_idx - 1) == '\n' {
+                end_idx -= 1;
+            }
+            char_idx = end_idx;
+        }
+    
+        Some(line_start_char + char_idx)
     }
 
     pub(crate) fn resize(&mut self, w: u16, h: u16) {
@@ -585,7 +598,7 @@ impl Widget for &Editor {
 
         }
 
-        //draw selection
+        // draw selection
         if let Some(selection) = self.selection {
             let start = selection.start.min(selection.end);
             let end = selection.start.max(selection.end);
