@@ -92,14 +92,14 @@ Run the included examples to see the editor in action:
 # Minimal editor example
 cargo run --release --example minimal
 
-# Full-featured editor
-cargo run --release --example main <filename>
+# Half-screen editor
+cargo run --release --example half
 
 # Split-screen editor
 cargo run --release --example split
 
-# Half-screen editor
-cargo run --release --example half
+# Editor
+cargo run --release --example editor <filename>
 ```
 
 ## Key Bindings
