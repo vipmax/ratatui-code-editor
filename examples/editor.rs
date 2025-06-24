@@ -13,10 +13,19 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::stdout;
 use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::theme::vesper;
+use ratatui_code_editor::utils::get_lang;
 
 fn main() -> anyhow::Result<()> {
-    let filename = "src/editor.rs";
-    let language = "rust";
+    let args: Vec<String> = std::env::args().collect();
+    
+    let filename = if args.len() > 1 {
+        &args[1]
+    } else {
+        eprintln!("Usage: cargo run --release --example main <filename>");
+        return Ok(());
+    };
+    
+    let language = get_lang(filename);
     let content = std::fs::read_to_string(filename)?;
 
     enable_raw_mode()?;

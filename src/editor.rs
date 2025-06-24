@@ -63,6 +63,7 @@ impl Editor {
             KeyCode::Char('x') if ctrl => self.handle_cut()?,
             KeyCode::Char('k') if ctrl => self.handle_delete_line(),
             KeyCode::Char('d') if ctrl => self.handle_duplicate()?,
+            KeyCode::Char('a') if ctrl => self.handle_select_all(),
 
             KeyCode::Char('w') if ctrl => self.offset_x += 1,
             KeyCode::Char('q') if ctrl => self.offset_x = self.offset_x.saturating_sub(1),
@@ -480,6 +481,12 @@ impl Editor {
             self.cursor = insert_pos + new_column;
         }
         Ok(())
+    }
+
+    pub fn handle_select_all(&mut self) {
+        let from = 0;
+        let to = self.code.len_chars();
+        self.selection = Some(Selection::new(from, to));
     }
 
 }

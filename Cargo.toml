@@ -1,8 +1,22 @@
 [package]
 name = "ratatui-code-editor"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
+authors = ["vipmax"]
+description = "ratatui-code-editor is A code editor widget for ratatui, built with syntax highlighting powered by Tree-sitter."
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/vipmax/ratatui-code-editor"
+repository = "https://github.com/vipmax/ratatui-code-editor.git"
+keywords = ["tui", "ratatui", "terminal", "editor"]
+categories = ["command-line-interface", "tui", "editor", "tree-sitter"]
 
+[[example]]
+name = "minimal"
+path = "examples/minimal.rs"
+[[example]]
+name = "editor"
+path = "examples/editor.rs"
 [[example]]
 name = "half"
 path = "examples/half.rs"
@@ -19,10 +33,10 @@ crossterm = "0.29"
 ratatui = "0.29"
 ropey = "1.6"
 rust-embed = { version = "8.7", features = ["include-exclude"] }
-streaming-iterator = "0.1.9"
-tree-sitter = "0.25.6"
-tree-sitter-javascript = "0.23.1"
-tree-sitter-rust = "0.24.0"
-tree-sitter-typescript = "0.23.2"
-unicode-width = "0.2.0"
-arboard = { version = "3.5.0", default-features = false }
+streaming-iterator = "0.1"
+tree-sitter = "0.25"
+tree-sitter-javascript = "0.23"
+tree-sitter-rust = "0.24"
+tree-sitter-typescript = "0.23"
+unicode-width = "0.2"
+arboard = { version = "3.5", default-features = false }

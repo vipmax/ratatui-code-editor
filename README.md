@@ -1,0 +1,178 @@
+# Ratatui Code Editor widget
+
+A code editor widget for [Ratatui](https://github.com/ratatui/ratatui), built with syntax highlighting powered by Tree-sitter.
+
+## Demo
+
+![basic usage](demo.gif)
+
+
+## Features
+
+- 🎨 **Syntax Highlighting** - Powered by Tree-sitter with support for multiple languages
+- 📝 **Text Editing** - Full text editing capabilities with cursor movement
+- 🖱️ **Mouse Support** - Click to position cursor, drag to select text
+- 📋 **Copy/Paste** - Clipboard integration with system clipboard
+- 🔄 **Undo/Redo** - Full history management for edit operations
+- 🎯 **Text Selection** - Visual text selection with keyboard and mouse
+- 🌈 **Themes** - Customizable color themes for syntax highlighting
+- 📱 **Responsive** - Adapts to terminal window size changes
+
+## Supported Languages
+
+- Rust
+- JavaScript
+- TypeScript
+- Plain text (fallback)
+
+## Quick Start
+
+Add this to your `Cargo.toml`:
+
+```toml
+[dependencies]
+ratatui-code-editor = "0.0.1"
+```
+
+### Basic Usage
+
+```rust
+use crossterm::{
+    event::{self, Event, KeyCode},
+    execute,
+    terminal::{
+        enable_raw_mode, disable_raw_mode, 
+        EnterAlternateScreen, LeaveAlternateScreen
+    },
+};
+use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui_code_editor::editor::Editor;
+use ratatui_code_editor::theme::vesper;
+use std::io::stdout;
+
+fn main() -> anyhow::Result<()> {
+    enable_raw_mode()?;
+    execute!(stdout(), EnterAlternateScreen)?;
+    
+    let backend = CrosstermBackend::new(stdout());
+    let mut terminal = Terminal::new(backend)?;
+    
+    let content = "fn main() {\n    println!(\"Hello, world!\");\n}";
+    let mut editor = Editor::new("rust", content, vesper());
+    let mut editor_area = ratatui::layout::Rect::default();
+    
+    loop {
+        terminal.draw(|f| {
+            let area = f.area();
+            editor_area = area;
+            f.render_widget(&editor, editor_area);
+        })?;
+        
+        if let Event::Key(key) = event::read()? {
+            if key.code == KeyCode::Esc {
+                break;
+            }
+            editor.input(key, &editor_area)?;
+        }
+    }
+    
+    disable_raw_mode()?;
+    execute!(stdout(), LeaveAlternateScreen)?;
+    Ok(())
+}
+```
+
+## Examples
+
+Run the included examples to see the editor in action:
+
+```bash
+# Minimal editor example
+cargo run --release --example minimal
+
+# Full-featured editor
+cargo run --release --example main <filename>
+
+# Split-screen editor
+cargo run --release --example split
+
+# Half-screen editor
+cargo run --release --example half
+```
+
+## Key Bindings
+
+### Navigation
+- **Arrow Keys** - Move cursor
+
+### Editing
+- **Any printable character** - Insert character
+- **Delete** - Delete characters
+- **Enter** - Insert new line
+- **Tab** - Insert tab or spaces
+
+### Selection
+- **Shift + Arrow Keys** - Select text
+- **Ctrl+A** - Select all
+- **Mouse drag** - Select text with mouse
+- **Mouse double click** - Select word with mouse
+- **Mouse triple click** - Select line with mouse
+
+### Clipboard
+- **Ctrl+C** - Copy selected text
+- **Ctrl+V** - Paste from clipboard
+- **Ctrl+X** - Cut selected text
+
+### History
+- **Ctrl+Z** - Undo
+- **Ctrl+Y** - Redo
+
+## Themes
+
+The editor comes with built-in themes:
+
+- `vesper` - Dark theme with purple accents
+- Custom themes can be created by providing color mappings
+
+```rust
+let custom_theme = vec![
+    ("keyword", "#ff6b6b"),
+    ("string", "#4ecdc4"),
+    ("comment", "#95a5a6"),
+    ("function", "#f39c12"),
+];
+let editor = Editor::new("rust", content, custom_theme);
+```
+
+## Architecture
+
+The editor is built with several key components:
+
+- **Editor** - Main widget that handles rendering and input
+- **Code** - Text buffer with Tree-sitter integration for syntax highlighting
+- **History** - Undo/redo functionality with edit tracking
+- **Selection** - Text selection state management
+- **Theme** - Color scheme management
+
+## Dependencies
+
+- `ratatui` - Terminal UI framework
+- `tree-sitter` - Syntax highlighting parser
+- `ropey` - Efficient text buffer
+- `crossterm` - Cross-platform terminal manipulation
+- `arboard` - Clipboard access
+- `unicode-width` - Unicode text width calculation
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Built on top of the excellent [Ratatui](https://github.com/ratatui/ratatui) TUI framework
+- Syntax highlighting powered by [Tree-sitter](https://tree-sitter.github.io/)
+- Text editing functionality inspired by modern code editors

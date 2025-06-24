@@ -1,7 +1,7 @@
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, 
-        Event, KeyCode, KeyModifiers, KeyEvent
+        Event, KeyCode
     },
     execute,
     terminal::{
@@ -58,9 +58,6 @@ fn main() -> anyhow::Result<()> {
                 Event::Key(key) => {
                     if key.code == KeyCode::Esc {
                         break;
-                    } else if is_save_pressed(key) {
-                        let content = editor.get_content();
-                        save_to_file(&content, filename)?;
                     } else {
                         editor.input(key, &editor_area)?;
                     }
@@ -81,17 +78,4 @@ fn main() -> anyhow::Result<()> {
         DisableMouseCapture
     )?;
     Ok(())
-}
-
-fn save_to_file(content: &str, path: &str) -> anyhow::Result<()> {
-    use std::io::Write;
-    
-    let mut file = std::fs::File::create(path)?;
-    file.write_all(content.as_bytes())?;
-    Ok(())
-}
-
-fn is_save_pressed(key: KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL) &&
-        key.code == KeyCode::Char('s')
 }
