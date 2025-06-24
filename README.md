@@ -30,8 +30,10 @@ A code editor widget for [Ratatui](https://github.com/ratatui/ratatui), built wi
 Add this to your `Cargo.toml`:
 
 ```toml
-[dependencies]
-ratatui-code-editor = "0.0.1"
+anyhow = "1.0"
+crossterm = "0.29"
+ratatui = "0.29"
+ratatui-code-editor = { git = "https://github.com/vipmax/ratatui-code-editor" }
 ```
 
 ### Basic Usage
