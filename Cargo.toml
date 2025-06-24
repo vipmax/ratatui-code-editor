@@ -1,7 +1,17 @@
 [package]
-name = "ts-editor-ratatui"
+name = "ratatui-code-editor"
 version = "0.1.0"
 edition = "2024"
+
+[[example]]
+name = "half"
+path = "examples/half.rs"
+[[example]]
+name = "split"
+path = "examples/split.rs"
+
+[profile.release]
+debug = true
 
 [dependencies]
 anyhow = "1.0"

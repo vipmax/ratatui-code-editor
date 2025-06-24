@@ -1,18 +1,15 @@
 use crossterm::event::{
-    KeyEvent, MouseEvent, MouseEventKind, MouseButton, KeyModifiers
+    KeyEvent, KeyModifiers,
+    MouseEvent, MouseEventKind, MouseButton,
 };
 use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::{prelude::*, widgets::Widget};
 use std::collections::HashMap;
-use std::f32::DIGITS;
 use unicode_width::UnicodeWidthChar;
-use ratatui::{Terminal, backend::CrosstermBackend};
-use std::io::Stdout;
 use std::time::{Instant, Duration};
-
 use crate::code::Code;
-use crate::history::{Edit, EditKind};
+use crate::history::{EditKind};
 use crate::selection::Selection;
 
 pub struct Editor {
@@ -20,8 +17,6 @@ pub struct Editor {
     cursor: usize,
     offset_y: usize,
     offset_x: usize,
-    width: usize,
-    height: usize,
     theme: HashMap<String, Style>,
     selection: Option<Selection>,
     last_click: Option<(Instant, usize)>,
@@ -29,12 +24,8 @@ pub struct Editor {
 }
 
 impl Editor {
-    /// Create a new editor instance,
-    /// with language, text, width, and height.
-    pub fn new(
-        lang: &str, text: &str, w: usize, h: usize,
-        theme: Vec<(&str, &str)>,
-    ) -> Self {
+    /// Create a new editor instance with language, text, and theme
+    pub fn new(lang: &str, text: &str, theme: Vec<(&str, &str)>) -> Self {
         let code = Code::new(text, lang)
             .or_else(|_| Code::new(text, "text"))
             .unwrap();
@@ -46,8 +37,6 @@ impl Editor {
             cursor: 0,
             offset_y: 0,
             offset_x: 0,
-            width: w,
-            height: h,
             theme,
             selection: None,
             last_click: None,
@@ -56,52 +45,51 @@ impl Editor {
     }
 
     pub fn input(
-        &mut self, 
+        &mut self,
         key: KeyEvent,
-        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        area: &Rect,
     ) -> anyhow::Result<()> {
-        use crossterm::event::KeyCode::*;
+        use crossterm::event::KeyCode;
 
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        // let alt = key.modifiers.contains(KeyModifiers::ALT);
 
         match key.code {
-            Char('z') if ctrl => self.handle_undo(),
-            Char('y') if ctrl => self.handle_redo(),
-            Char('c') if ctrl => self.handle_copy()?,
-            Char('v') if ctrl => self.handle_paste()?,
-            Char('x') if ctrl => self.handle_cut()?,
-            Char('k') if ctrl => self.handle_delete_line(),
-            Char('d') if ctrl => self.handle_duplicate()?,
+            KeyCode::Char('z') if ctrl => self.handle_undo(),
+            KeyCode::Char('y') if ctrl => self.handle_redo(),
+            KeyCode::Char('c') if ctrl => self.handle_copy()?,
+            KeyCode::Char('v') if ctrl => self.handle_paste()?,
+            KeyCode::Char('x') if ctrl => self.handle_cut()?,
+            KeyCode::Char('k') if ctrl => self.handle_delete_line(),
+            KeyCode::Char('d') if ctrl => self.handle_duplicate()?,
 
-            Char('w') if ctrl  => { self.offset_x += 1; },
-            Char('q') if ctrl  => { self.offset_x = self.offset_x.saturating_sub(1); },
-            Left        => self.handle_left(shift),
-            Right       => self.handle_right(shift),
-            Up          => self.handle_up(shift),
-            Down        => self.handle_down(shift),
-            Backspace   => self.handle_delete(),
-            Enter       => self.handle_char('\n'),
-            Char(c)     => self.handle_char(c),
-            Tab         => self.handle_tab(),
+            KeyCode::Char('w') if ctrl => self.offset_x += 1,
+            KeyCode::Char('q') if ctrl => self.offset_x = self.offset_x.saturating_sub(1),
+            KeyCode::Left      => self.handle_left(shift),
+            KeyCode::Right     => self.handle_right(shift),
+            KeyCode::Up        => self.handle_up(shift),
+            KeyCode::Down      => self.handle_down(shift),
+            KeyCode::Backspace => self.handle_delete(),
+            KeyCode::Enter     => self.handle_char('\n'),
+            KeyCode::Char(c)   => self.handle_char(c),
+            KeyCode::Tab       => self.handle_tab(),
             _ => {}
         }
-        
-        let area = terminal.size()?;
+
+        self.focus(&area);
+
+        Ok(())
+    }
+    
+    fn focus(&mut self, area: &Rect) {
         let width = area.width as usize;
         let height = area.height as usize;
         let total_lines = self.code.len_lines();
         let max_line_number = total_lines.max(1);
         let line_number_digits = max_line_number.to_string().len();
-        let line_number_width = line_number_digits + 2;
-        
-        self.focus(width, height, line_number_width);
-        
-        Ok(())
-    }
-    
-    fn focus(&mut self, width: usize, height: usize, line_number_width: usize) {
+        let line_number_width = (line_number_digits + 2) as usize;
+
         let line = self.code.char_to_line(self.cursor);
         let col = self.cursor - self.code.line_to_char(line);
     
@@ -121,20 +109,19 @@ impl Editor {
         }
     }
 
-
     pub fn mouse(
         &mut self,
         mouse: MouseEvent,
-        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        area: &Rect,
     ) -> anyhow::Result<()> {
-        let area = terminal.get_frame().area();
-        let pos = self.cursor_from_mouse(mouse.column, mouse.row, area);
 
         match mouse.kind {
             MouseEventKind::ScrollUp => self.scroll_up(),
             MouseEventKind::ScrollDown => self.scroll_down(area.height as usize),
 
             MouseEventKind::Down(MouseButton::Left) => {
+                let pos = self.cursor_from_mouse(mouse.column, mouse.row, area);
+
                 if let Some(cursor) = pos {
                     let now = Instant::now();
                     let max_dt = Duration::from_millis(700);
@@ -171,6 +158,8 @@ impl Editor {
             }
 
             MouseEventKind::Drag(MouseButton::Left) => {
+                let pos = self.cursor_from_mouse(mouse.column, mouse.row, area);
+
                 if let Some(cursor) = pos {
                     let anchor = self.selection_anchor();
                     self.selection = Some(Selection::from_anchor_and_cursor(anchor, cursor));
@@ -185,7 +174,7 @@ impl Editor {
     }
 
     fn cursor_from_mouse(
-        &self, mouse_x: u16, mouse_y: u16, area: Rect
+        &self, mouse_x: u16, mouse_y: u16, area: &Rect
     ) -> Option<usize> {
         let total_lines = self.code.len_lines();
         let max_line_number = total_lines.max(1);
@@ -215,8 +204,7 @@ impl Editor {
         let char_start = line_start_char + start_col;
         let char_end = line_start_char + end_col;
     
-        let visible_chars = self.code.char_slice(char_start, char_end)
-            .unwrap_or_else(|| panic!("self.code.char_slice(char_start, char_end) None"));
+        let visible_chars = self.code.char_slice(char_start, char_end);
     
         let mut current_col = 0;
         let mut char_idx = start_col;
@@ -230,8 +218,7 @@ impl Editor {
             char_idx += 1;
         }
     
-        let line = self.code.char_slice(line_start_char, line_start_char + line_len)
-            .unwrap_or_else(|| panic!("self.code.char_slice(line_start_char, line_start_char + line_len) None"));
+        let line = self.code.char_slice(line_start_char, line_start_char + line_len);
 
         let visual_width: usize = line.chars()
             .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0))
@@ -246,11 +233,6 @@ impl Editor {
         }
     
         Some(line_start_char + char_idx)
-    }
-
-    pub(crate) fn resize(&mut self, w: u16, h: u16) {
-        self.width = w as usize;
-        self.height = h as usize;
     }
 
     fn handle_left(&mut self, shift: bool) {
@@ -286,7 +268,7 @@ impl Editor {
         if row + 1 < self.code.len_lines() {
             let next_line_start = self.code.line_to_char(row + 1);
             let next_line_len = self.code.line_len(row + 1);
-            let new_col = col.min(next_line_len);
+            let new_col = col.min(next_line_len - 1);
             let new_cursor = next_line_start + new_col;
             self.update_selection(new_cursor, shift);
             self.cursor = new_cursor;
@@ -368,7 +350,7 @@ impl Editor {
         if let Some(edits) = edits {
             for edit in edits.iter().rev()  {
                 match &edit.kind {
-                    EditKind::Insert { offset, text } => {
+                    EditKind::Insert { offset, text: _ } => {
                         self.cursor = *offset;
                     }
                     EditKind::Remove { offset, text } => {
@@ -387,7 +369,7 @@ impl Editor {
                     EditKind::Insert { offset, text } => {
                         self.cursor = *offset + text.chars().count();
                     }
-                    EditKind::Remove { offset, text } => {
+                    EditKind::Remove { offset, text: _ } => {
                         self.cursor = *offset;
                     }
                 }
@@ -533,8 +515,7 @@ impl Widget for &Editor {
             let char_start = line_start_char + start_col;
             let char_end = line_start_char + end_col;
         
-            let visible_chars = self.code.char_slice(char_start, char_end)
-                .unwrap_or_else(|| panic!(" self.code.char_slice(char_start, char_end) None"));
+            let visible_chars = self.code.char_slice(char_start, char_end);
 
             let displayed_line = visible_chars.to_string();
         
@@ -572,8 +553,7 @@ impl Widget for &Editor {
                     continue; // last line offset case 
                 }
 
-                let chars = self.code.char_slice(start_char, end_char)
-                    .unwrap_or_else(|| panic!("self.code.char_slice(start_char, end_char) None"));
+                let chars = self.code.char_slice(start_char, end_char);
 
                 let start_byte = self.code.char_to_byte(start_char);
             
@@ -607,7 +587,6 @@ impl Widget for &Editor {
                     byte_idx_in_rope += ch_len;
                 }
             }
-
         }
 
         // draw selection
@@ -639,8 +618,7 @@ impl Widget for &Editor {
                 let char_slice_start = line_start_char + start_col;
                 let char_slice_end = line_start_char + end_col;
         
-                let visible_chars = self.code.char_slice(char_slice_start, char_slice_end)
-                    .unwrap_or_else(|| panic!("self.code.char_slice(char_slice_start, char_slice_end) None"));
+                let visible_chars = self.code.char_slice(char_slice_start, char_slice_end);
 
                 let draw_y = area.top() + (line_idx - self.offset_y) as u16;
                 let mut visual_x = 0;
@@ -670,12 +648,10 @@ impl Widget for &Editor {
                 
             let cursor_visual_col: usize = self.code
                 .char_slice(line_start_char, line_start_char + cursor_char_col.min(line_len))
-                .unwrap_or_else(|| panic!(".char_slice(line_start_char, line_start_char + cursor_char_col.min(line_len)) None"))
                 .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0)).sum();
         
             let offset_visual_col: usize = self.code
                 .char_slice(line_start_char, line_start_char + start_col.min(line_len))
-                .unwrap_or_else(|| panic!(".char_slice(line_start_char, line_start_char + start_col.min(line_len)) None"))
                 .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0)).sum();
         
             let relative_visual_col = cursor_visual_col.saturating_sub(offset_visual_col);

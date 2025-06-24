@@ -634,6 +634,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ratatui-code-editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "crossterm 0.29.0",
+ "ratatui",
+ "ropey",
+ "rust-embed",
+ "streaming-iterator",
+ "tree-sitter",
+ "tree-sitter-javascript",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "unicode-width 0.2.0",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -960,24 +978,6 @@ checksum = "6c5f76ed8d947a75cc446d5fccd8b602ebf0cde64ccf2ffa434d873d7a575eff"
 dependencies = [
  "cc",
  "tree-sitter-language",
-]
-
-[[package]]
-name = "ts-editor-ratatui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "crossterm 0.29.0",
- "ratatui",
- "ropey",
- "rust-embed",
- "streaming-iterator",
- "tree-sitter",
- "tree-sitter-javascript",
- "tree-sitter-rust",
- "tree-sitter-typescript",
- "unicode-width 0.2.0",
 ]
 
 [[package]]

@@ -6,7 +6,6 @@ use tree_sitter::{Language, Parser, Query, Tree};
 use crate::history::{History, EditBatch, Edit, EditKind};
 use rust_embed::RustEmbed;
 use std::collections::HashMap;
-use std::thread::park;
 
 #[derive(RustEmbed)]
 #[folder = ""]
@@ -113,8 +112,8 @@ impl Code {
         self.content.char_to_line(char_idx)
     }
     
-    pub fn char_slice(&self, start: usize, end: usize) -> Option<RopeSlice> {
-        self.content.get_slice(start..end)
+    pub fn char_slice(&self, start: usize, end: usize) -> RopeSlice {
+        self.content.slice(start..end)
     }
     
     pub fn byte_slice(&self, start: usize, end: usize) -> RopeSlice {
@@ -310,9 +309,9 @@ impl Code {
         while let Some(m) = query_matches.next() {
             for capture in m.captures {
                 let name = capture_names[capture.index as usize];
-                let node_text = self.content
-                    .byte_slice(capture.node.start_byte()..capture.node.end_byte()).as_str()
-                    .unwrap_or_default(); // debug
+                // let node_text = self.content
+                //     .byte_slice(capture.node.start_byte()..capture.node.end_byte()).as_str()
+                //     .unwrap_or_default(); // debug
 
                 if let Some(value) = theme.get(name) {
                     unsorted.push((
@@ -325,7 +324,7 @@ impl Code {
             }
         }
     
-        // Sort by length descending, then capture index ascending
+        // Sort by length descending, then by capture index
         unsorted.sort_by(|a, b| {
             let len_a = a.1 - a.0;
             let len_b = b.1 - b.0;
@@ -337,7 +336,6 @@ impl Code {
     
         unsorted.into_iter()
             .map(|(start, end, _, value)| (start, end, value))
-            .take(1000)
             .collect()
     }
     
