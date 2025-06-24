@@ -215,7 +215,8 @@ impl Editor {
         let char_start = line_start_char + start_col;
         let char_end = line_start_char + end_col;
     
-        let visible_chars = self.code.char_slice(char_start, char_end);
+        let visible_chars = self.code.char_slice(char_start, char_end)
+            .unwrap_or_else(|| panic!("self.code.char_slice(char_start, char_end) None"));
     
         let mut current_col = 0;
         let mut char_idx = start_col;
@@ -229,7 +230,9 @@ impl Editor {
             char_idx += 1;
         }
     
-        let line = self.code.char_slice(line_start_char, line_start_char + line_len);
+        let line = self.code.char_slice(line_start_char, line_start_char + line_len)
+            .unwrap_or_else(|| panic!("self.code.char_slice(line_start_char, line_start_char + line_len) None"));
+
         let visual_width: usize = line.chars()
             .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0))
             .sum();
@@ -502,6 +505,7 @@ impl Editor {
 impl Widget for &Editor {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let total_lines = self.code.len_lines();
+        let total_chars = self.code.len_chars();
         let max_line_number = total_lines.max(1);
         let line_number_digits = max_line_number.to_string().len();
         let line_number_width = line_number_digits + 2;
@@ -529,7 +533,9 @@ impl Widget for &Editor {
             let char_start = line_start_char + start_col;
             let char_end = line_start_char + end_col;
         
-            let visible_chars = self.code.char_slice(char_start, char_end);
+            let visible_chars = self.code.char_slice(char_start, char_end)
+                .unwrap_or_else(|| panic!(" self.code.char_slice(char_start, char_end) None"));
+
             let displayed_line = visible_chars.to_string();
         
             let text_x = area.left() + line_number_width as u16;
@@ -551,7 +557,7 @@ impl Widget for &Editor {
             
             for screen_y in 0..(area.height as usize) {
                 let line_idx = self.offset_y + screen_y;
-                if line_idx >= self.code.len_lines() { break }
+                if line_idx >= total_lines { break }
             
                 let line_len = self.code.line_len(line_idx);
                 let max_x = (area.width as usize).saturating_sub(line_number_width);
@@ -561,8 +567,14 @@ impl Widget for &Editor {
                 let visible_len = line_len.saturating_sub(self.offset_x);
                 let end = max_x.min(visible_len);
                 let end_char = start_char + end;
-            
-                let chars = self.code.char_slice(start_char, end_char);
+
+                if start_char > total_chars || end_char > total_chars {
+                    continue; // last line offset case 
+                }
+
+                let chars = self.code.char_slice(start_char, end_char)
+                    .unwrap_or_else(|| panic!("self.code.char_slice(start_char, end_char) None"));
+
                 let start_byte = self.code.char_to_byte(start_char);
             
                 let highlights = self.code.highlight_interval(
@@ -627,8 +639,9 @@ impl Widget for &Editor {
                 let char_slice_start = line_start_char + start_col;
                 let char_slice_end = line_start_char + end_col;
         
-                let visible_chars = self.code.char_slice(char_slice_start, char_slice_end);
-        
+                let visible_chars = self.code.char_slice(char_slice_start, char_slice_end)
+                    .unwrap_or_else(|| panic!("self.code.char_slice(char_slice_start, char_slice_end) None"));
+
                 let draw_y = area.top() + (line_idx - self.offset_y) as u16;
                 let mut visual_x = 0;
                 let mut char_col = start_col;
@@ -657,10 +670,12 @@ impl Widget for &Editor {
                 
             let cursor_visual_col: usize = self.code
                 .char_slice(line_start_char, line_start_char + cursor_char_col.min(line_len))
+                .unwrap_or_else(|| panic!(".char_slice(line_start_char, line_start_char + cursor_char_col.min(line_len)) None"))
                 .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0)).sum();
         
             let offset_visual_col: usize = self.code
                 .char_slice(line_start_char, line_start_char + start_col.min(line_len))
+                .unwrap_or_else(|| panic!(".char_slice(line_start_char, line_start_char + start_col.min(line_len)) None"))
                 .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0)).sum();
         
             let relative_visual_col = cursor_visual_col.saturating_sub(offset_visual_col);

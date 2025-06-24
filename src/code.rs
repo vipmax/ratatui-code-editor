@@ -90,6 +90,10 @@ impl Code {
         self.content.len_lines()
     }
 
+    pub fn len_chars(&self) -> usize {
+        self.content.len_chars()
+    }
+
     pub fn line_to_char(&self, line_idx: usize) -> usize {
         self.content.line_to_char(line_idx)
     }
@@ -109,8 +113,8 @@ impl Code {
         self.content.char_to_line(char_idx)
     }
     
-    pub fn char_slice(&self, start: usize, end: usize) -> RopeSlice {
-        self.content.slice(start..end)
+    pub fn char_slice(&self, start: usize, end: usize) -> Option<RopeSlice> {
+        self.content.get_slice(start..end)
     }
     
     pub fn byte_slice(&self, start: usize, end: usize) -> RopeSlice {
@@ -306,6 +310,10 @@ impl Code {
         while let Some(m) = query_matches.next() {
             for capture in m.captures {
                 let name = capture_names[capture.index as usize];
+                let node_text = self.content
+                    .byte_slice(capture.node.start_byte()..capture.node.end_byte()).as_str()
+                    .unwrap_or_default(); // debug
+
                 if let Some(value) = theme.get(name) {
                     unsorted.push((
                         capture.node.start_byte(),
@@ -322,7 +330,7 @@ impl Code {
             let len_a = a.1 - a.0;
             let len_b = b.1 - b.0;
             match len_b.cmp(&len_a) {
-                std::cmp::Ordering::Equal => a.2.cmp(&b.2),
+                std::cmp::Ordering::Equal => b.2.cmp(&a.2),
                 other => other,
             }
         });
