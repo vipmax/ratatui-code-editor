@@ -8,8 +8,8 @@ license = "MIT"
 readme = "README.md"
 homepage = "https://github.com/vipmax/ratatui-code-editor"
 repository = "https://github.com/vipmax/ratatui-code-editor.git"
-keywords = ["tui", "ratatui", "terminal", "editor"]
-categories = ["command-line-interface", "tui", "editor", "tree-sitter"]
+keywords = ["ratatui", "terminal", "editor", "tree-sitter"]
+categories = ["ratatui", "tui", "editor", "tree-sitter"]
 
 [[example]]
 name = "minimal"
@@ -38,5 +38,5 @@ tree-sitter = "0.25"
 tree-sitter-javascript = "0.23"
 tree-sitter-rust = "0.24"
 tree-sitter-typescript = "0.23"
-unicode-width = "0.2"
+unicode-width = "0.2.1"
 arboard = { version = "3.5", default-features = false }

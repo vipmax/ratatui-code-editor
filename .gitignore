@@ -2,3 +2,4 @@
 test.rs
 test/
 .DS_Store
+Cargo.toml
