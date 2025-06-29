@@ -53,6 +53,18 @@ impl Code {
             "rust" => Some(tree_sitter_rust::LANGUAGE.into()),
             "javascript" => Some(tree_sitter_javascript::LANGUAGE.into()),
             "typescript" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            "python" => Some(tree_sitter_python::LANGUAGE.into()),
+            "go" => Some(tree_sitter_go::LANGUAGE.into()),
+            "java" => Some(tree_sitter_java::LANGUAGE.into()),
+            "c_sharp" => Some(tree_sitter_c_sharp::LANGUAGE.into()),
+            "c" => Some(tree_sitter_c::LANGUAGE.into()),
+            "cpp" => Some(tree_sitter_cpp::LANGUAGE.into()),
+            "html" => Some(tree_sitter_html::LANGUAGE.into()),
+            "css" => Some(tree_sitter_css::LANGUAGE.into()),
+            "yaml" => Some(tree_sitter_yaml::LANGUAGE.into()),
+            "json" => Some(tree_sitter_json::LANGUAGE.into()),
+            "toml" => Some(tree_sitter_toml_ng::LANGUAGE.into()),
+            "shell" => Some(tree_sitter_bash::LANGUAGE.into()),
             _ => None,
         }
     }
@@ -223,63 +235,6 @@ impl Code {
     pub fn is_highlight(&self) -> bool {
         self.query.is_some()
     }
-
-    /// Highlights the interval between `start_line` and `end_line`.
-    /// Returns a list of (start byte, end byte, token_name) for highlighting.
-    pub fn highlight<T: Copy>(
-        &self, start_line: usize, end_line: usize, theme: &HashMap<String, T>,
-    ) -> Vec<(usize, usize, T)> {
-        
-        if start_line > end_line { panic!("invalid range")}
-        let Some(query) = &self.query else { return vec![]; };
-        let Some(tree) = &self.tree else { return vec![]; };
-    
-        let start_byte = self.content.line_to_byte(start_line);
-        let end_byte = self.content.line_to_byte(end_line.min(self.content.len_lines()));
-    
-        let mut query_cursor = QueryCursor::new();
-        query_cursor.set_byte_range(start_byte..end_byte);
-        query_cursor.set_match_limit(100);
-    
-        let root_node = tree.root_node();
-        let capture_names = query.capture_names();
-        
-        let mut query_matches = query_cursor.matches(
-            query, root_node, RopeProvider(self.content.slice(..))
-        );
-    
-        let mut unsorted: Vec<(usize, usize, usize, T)> = Vec::new();
-    
-        while let Some(m) = query_matches.next() {
-            for capture in m.captures {
-                let name = capture_names[capture.index as usize];
-                if let Some(value) = theme.get(name) {
-                    unsorted.push((
-                        capture.node.start_byte(),
-                        capture.node.end_byte(),
-                        capture.index as usize,
-                        *value,
-                    ));
-                }
-            }
-        }
-    
-        // Sort by length descending, then capture index ascending
-        unsorted.sort_by(|a, b| {
-            let len_a = a.1 - a.0;
-            let len_b = b.1 - b.0;
-            match len_b.cmp(&len_a) {
-                std::cmp::Ordering::Equal => a.2.cmp(&b.2),
-                other => other,
-            }
-        });
-    
-        unsorted.into_iter()
-            .map(|(start, end, _, value)| (start, end, value))
-            .take(1000)
-            .collect()
-    }
-    
     
     /// Highlights the interval between `start` and `end` char indices.
     /// Returns a list of (start byte, end byte, token_name) for highlighting.
