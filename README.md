@@ -21,9 +21,21 @@ A code editor widget for [Ratatui](https://github.com/ratatui/ratatui), built wi
 ## Supported Languages
 
 - Rust
+- Python
 - JavaScript
 - TypeScript
-- Plain text (fallback)
+- C
+- C++
+- C#
+- Java
+- Html
+- Css
+- Yaml
+- Toml
+- Json
+- Bash
+
+
 
 ## Quick Start
 
