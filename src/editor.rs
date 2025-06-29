@@ -211,7 +211,7 @@ impl Editor {
         let mut char_idx = start_col;
     
         for ch in visible_chars.chars() {
-            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(1);
             if current_col + ch_width > clicked_col {
                 break;
             }
@@ -222,7 +222,7 @@ impl Editor {
         let line = self.code.char_slice(line_start_char, line_start_char + line_len);
 
         let visual_width: usize = line.chars()
-            .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0))
+            .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1))
             .sum();
     
         if clicked_col + self.offset_x >= visual_width {
@@ -524,7 +524,7 @@ impl Widget for &Editor {
         
             let visible_chars = self.code.char_slice(char_start, char_end);
 
-            let displayed_line = visible_chars.to_string();
+            let displayed_line = visible_chars.to_string().replace("\t", &" ");
         
             let text_x = area.left() + line_number_width as u16;
             if text_x < area.left() + area.width && draw_y < area.top() + area.height {
@@ -655,11 +655,11 @@ impl Widget for &Editor {
                 
             let cursor_visual_col: usize = self.code
                 .char_slice(line_start_char, line_start_char + cursor_char_col.min(line_len))
-                .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0)).sum();
+                .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1)).sum();
         
             let offset_visual_col: usize = self.code
                 .char_slice(line_start_char, line_start_char + start_col.min(line_len))
-                .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0)).sum();
+                .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1)).sum();
         
             let relative_visual_col = cursor_visual_col.saturating_sub(offset_visual_col);
             let visible_x = relative_visual_col.min(max_x);

@@ -25,3 +25,17 @@ pub fn get_lang(filename: &str) -> String {
     }
     .to_string()
 }
+
+pub fn indent(lang: &str) -> String {
+    match lang {
+        "python" | "php" | "toml" | "c"  | "cpp" |
+        "zig" | "kotlin" | "erlang" | "sql" => {
+            "    ".to_string()
+        },
+        "go" | "c_sharp" => {
+            "\t".to_string()
+        },
+
+        _ => "  ".to_string(),
+    }
+}

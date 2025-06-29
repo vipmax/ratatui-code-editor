@@ -6,6 +6,7 @@ use tree_sitter::{Language, Parser, Query, Tree};
 use crate::history::{History, EditBatch, Edit, EditKind};
 use rust_embed::RustEmbed;
 use std::collections::HashMap;
+use crate::utils::indent;
 
 #[derive(RustEmbed)]
 #[folder = ""]
@@ -375,12 +376,7 @@ impl Code {
     }
     
     pub fn indent(&self) -> String {
-        match self.lang.as_str() {
-            "rust" | "javascript" | "typescript" | "python" => {
-                "    ".to_string()
-            },
-            _ => "  ".to_string(),
-        }
+        indent(&self.lang)
     }
 }
 
@@ -473,5 +469,12 @@ mod tests {
         
         code.redo();
         assert_eq!(code.content.to_string(), "Hello");
+    }
+
+    #[test]
+    fn test_highlight() {
+        let ch_width = unicode_width::UnicodeWidthChar::width('\t');
+        println!("ch_width: {:?}", ch_width);
+        // assert_eq!(ch_width, 1);
     }
 }
