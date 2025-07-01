@@ -75,7 +75,7 @@ impl Editor {
             KeyCode::Up        => self.handle_up(shift),
             KeyCode::Down      => self.handle_down(shift),
             KeyCode::Backspace => self.handle_delete(),
-            KeyCode::Enter     => self.handle_char('\n'),
+            KeyCode::Enter     => self.handle_enter(),
             KeyCode::Char(c)   => self.handle_char(c),
             KeyCode::Tab       => self.handle_tab(),
             _ => {}
@@ -307,6 +307,20 @@ impl Editor {
         let text = text.to_string();
         self.code.begin_batch();
         self.remove_selection();
+        self.code.insert(self.cursor, &text);
+        self.code.commit_batch();
+        self.cursor += text.chars().count();
+    }
+
+
+    pub fn handle_enter(&mut self) {
+        self.code.begin_batch();
+        self.remove_selection();
+
+        let (row, _) = self.code.point(self.cursor);
+        let indent_level = self.code.indentation_level(row);
+        let indent_text = self.code.indent().repeat(indent_level);
+        let text = format!("\n{}", indent_text);
         self.code.insert(self.cursor, &text);
         self.code.commit_batch();
         self.cursor += text.chars().count();

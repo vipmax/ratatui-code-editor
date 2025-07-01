@@ -378,6 +378,34 @@ impl Code {
     pub fn indent(&self) -> String {
         indent(&self.lang)
     }
+
+    pub fn indentation_level(&self, line: usize) -> usize {
+        if self.lang == "unknown" || self.lang == "" {
+            return 0;
+        }
+        let indent_str = self.indent();
+        let line_slice = self.line(line);
+        let line_str = line_slice.to_string();
+        let mut count = 0;
+        let mut chars = line_str.chars().peekable();
+
+        while chars.peek().is_some() {
+            let mut matched = true;
+            for ch in indent_str.chars() {
+                if Some(&ch) != chars.peek() {
+                    matched = false;
+                    break;
+                }
+                chars.next();
+            }
+            if matched {
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        count
+    }
 }
 
 /// An iterator over byte slices of Rope chunks.
@@ -476,5 +504,33 @@ mod tests {
         let ch_width = unicode_width::UnicodeWidthChar::width('\t');
         println!("ch_width: {:?}", ch_width);
         // assert_eq!(ch_width, 1);
+    }
+
+    #[test]
+    fn test_indentation_level0() {
+        let mut code = Code::new("", "unknown").unwrap();
+        code.insert(0, "    hello world");
+        assert_eq!(code.indentation_level(0), 0);
+    }
+
+    #[test]
+    fn test_indentation_level() {
+        let mut code = Code::new("", "python").unwrap();
+        code.insert(0, "    print('Hello, World!')");
+        assert_eq!(code.indentation_level(0), 1);
+    }
+
+    #[test]
+    fn test_indentation_level1() {
+        let mut code = Code::new("", "python").unwrap();
+        code.insert(0, "    print('Hello, World!')");
+        assert_eq!(code.indentation_level(0), 1);
+    }
+
+    #[test]
+    fn test_indentation_level2() {
+        let mut code = Code::new("", "python").unwrap();
+        code.insert(0, "        print('Hello, World!')");
+        assert_eq!(code.indentation_level(0), 2);
     }
 }
