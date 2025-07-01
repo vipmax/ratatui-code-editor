@@ -260,7 +260,11 @@ impl Editor {
         if row > 0 {
             let prev_line_start = self.code.line_to_char(row - 1);
             let prev_line_len = self.code.line_len(row - 1);
-            let new_col = col.min(prev_line_len);
+            let new_col = if prev_line_len < col {
+                prev_line_len.saturating_sub(1)
+            } else {
+                col
+            };
             let new_cursor = prev_line_start + new_col;
             self.update_selection(new_cursor, shift);
             self.cursor = new_cursor;
@@ -272,7 +276,11 @@ impl Editor {
         if row + 1 < self.code.len_lines() {
             let next_line_start = self.code.line_to_char(row + 1);
             let next_line_len = self.code.line_len(row + 1);
-            let new_col = col.min(next_line_len - 1);
+            let new_col = if next_line_len < col {
+                next_line_len.saturating_sub(1)
+            } else {
+                col
+            };
             let new_cursor = next_line_start + new_col;
             self.update_selection(new_cursor, shift);
             self.cursor = new_cursor;
