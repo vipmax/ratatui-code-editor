@@ -417,6 +417,23 @@ impl Editor {
         self.code.commit_batch();
     }
 
+    pub fn set_cursor(&mut self, cursor: usize) {
+        self.cursor = cursor;
+        self.fit_cursor();
+    }
+
+    pub fn fit_cursor(&mut self) {
+        // make sure cursor is not out of bounds 
+        let len = self.code.len_chars();
+        self.cursor = self.cursor.min(len);
+        
+        // make sure cursor is not out of bounds on the line
+        let (row, col) = self.code.point(self.cursor);
+        if col > self.code.line_len(row) {
+            self.cursor = self.code.line_to_char(row) + self.code.line_len(row);
+        }
+    }
+
     pub fn apply_edits(&mut self, edits: &EditBatch) {
         self.code.begin_batch();
         for edit in edits {
