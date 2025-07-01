@@ -11,6 +11,7 @@ use std::time::{Instant, Duration};
 use crate::code::Code;
 use crate::history::{EditKind};
 use crate::selection::Selection;
+use crate::utils;
 
 pub struct Editor {
     code: Code,
@@ -21,6 +22,7 @@ pub struct Editor {
     selection: Option<Selection>,
     last_click: Option<(Instant, usize)>,
     last_last_click: Option<(Instant, usize)>,
+    marks: Option<Vec<(usize, usize, Color)>>
 }
 
 impl Editor {
@@ -41,6 +43,7 @@ impl Editor {
             selection: None,
             last_click: None,
             last_last_click: None,
+            marks: None,
         }
     }
 
@@ -391,14 +394,12 @@ impl Editor {
         }
     }
 
+
+
     fn build_theme(theme: &Vec<(&str, &str)>) -> HashMap<String, Style> {
         theme.into_iter()
             .map(|(name, hex)| {
-                let hex = hex.trim_start_matches('#');
-                let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
-                let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
-                let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
-
+                let (r, g, b) = utils::rgb(hex);
                 (name.to_string(), Style::default().fg(Color::Rgb(r, g, b)))
             })
             .collect()
@@ -489,6 +490,16 @@ impl Editor {
         self.selection = Some(Selection::new(from, to));
     }
 
+    pub fn set_marks(&mut self, marks: Vec<(usize, usize, &str)>) {
+        self.marks = Some(
+            marks.into_iter()
+                .map(|(start, end, color)| {
+                    let (r, g, b) = utils::rgb(color);
+                    (start, end, Color::Rgb(r, g, b))
+                })
+                .collect()
+        );
+    }
 }
 
 impl Widget for &Editor {
@@ -644,6 +655,58 @@ impl Widget for &Editor {
                 }
             }
         }
+
+        // draw highlights
+        if let Some(ref marks) = self.marks {
+            for &(start, end, color) in marks {
+                if start >= end || end > total_chars { continue }
+
+                let start_line = self.code.char_to_line(start);
+                let end_line = self.code.char_to_line(end);
+
+                for line_idx in start_line..=end_line {
+                    if line_idx < self.offset_y || line_idx >= self.offset_y + area.height as usize {
+                        continue;
+                    }
+
+                    let line_start_char = self.code.line_to_char(line_idx);
+                    let line_len = self.code.line_len(line_idx);
+                    let line_end_char = line_start_char + line_len;
+
+                    let highlight_start = start.max(line_start_char);
+                    let highlight_end = end.min(line_end_char);
+
+                    let rel_start = highlight_start - line_start_char;
+                    let rel_end = highlight_end - line_start_char;
+
+                    let start_col = self.offset_x.min(line_len);
+                    let max_text_width = (area.width as usize).saturating_sub(line_number_width);
+                    let end_col = (start_col + max_text_width).min(line_len);
+
+                    let char_slice_start = line_start_char + start_col;
+                    let char_slice_end = line_start_char + end_col;
+
+                    let visible_chars = self.code.char_slice(char_slice_start, char_slice_end);
+
+                    let draw_y = area.top() + (line_idx - self.offset_y) as u16;
+                    let mut visual_x = 0;
+                    let mut char_col = start_col;
+
+                    for ch in visible_chars.chars() {
+                        if char_col >= rel_start && char_col < rel_end {
+                            let draw_x = area.left() + line_number_width as u16 + visual_x;
+                            if draw_x < area.right() && draw_y < area.bottom() {
+                                buf[(draw_x, draw_y)].set_bg(color);
+                            }
+                        }
+
+                        visual_x += UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
+                        char_col += 1;
+                    }
+                }
+            }
+        }
+
 
         // draw cursor
         if cursor_line >= self.offset_y && cursor_line < self.offset_y + area.height as usize {

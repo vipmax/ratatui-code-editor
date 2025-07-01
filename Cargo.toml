@@ -23,6 +23,9 @@ path = "examples/half.rs"
 [[example]]
 name = "split"
 path = "examples/split.rs"
+[[example]]
+name = "marks"
+path = "examples/marks.rs"
 
 [profile.release]
 debug = true
