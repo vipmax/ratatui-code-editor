@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use unicode_width::UnicodeWidthChar;
 use std::time::{Instant, Duration};
 use crate::code::Code;
-use crate::history::{EditKind};
+use crate::history::{EditBatch, Edit, EditKind};
 use crate::selection::Selection;
 use crate::utils;
 
@@ -379,6 +379,28 @@ impl Editor {
                 }
             }
         }
+    }
+
+    pub fn set_content(&mut self, content: &str) {
+        self.code.begin_batch();
+        self.code.remove(0, self.code.len());
+        self.code.insert(0, content);
+        self.code.commit_batch();
+    }
+
+    pub fn apply_edits(&mut self, edits: &EditBatch) {
+        self.code.begin_batch();
+        for edit in edits {
+            match &edit.kind {
+                EditKind::Insert { offset, text } => {
+                    self.code.insert(*offset, text);
+                }
+                EditKind::Remove { offset, text } => {
+                    self.code.remove(*offset, *offset + text.chars().count());
+                }
+            }
+        }
+        self.code.commit_batch();
     }
 
     pub fn scroll_up(&mut self) {
