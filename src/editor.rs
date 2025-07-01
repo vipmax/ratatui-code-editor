@@ -394,8 +394,6 @@ impl Editor {
         }
     }
 
-
-
     fn build_theme(theme: &Vec<(&str, &str)>) -> HashMap<String, Style> {
         theme.into_iter()
             .map(|(name, hex)| {
@@ -407,6 +405,10 @@ impl Editor {
 
     pub fn get_content(&self) -> String {
         self.code.get_content()
+    }
+
+    pub fn get_cursor(&self) -> usize {
+        self.cursor
     }
 
     pub fn handle_copy(&mut self) -> anyhow::Result<()> {
