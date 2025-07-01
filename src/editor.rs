@@ -358,8 +358,15 @@ impl Editor {
             self.cursor = start;
             self.selection = None;
         } else if self.cursor > 0 {
-            self.delete_text(self.cursor - 1, self.cursor);
-            self.cursor -= 1;
+            let (row, col) = self.code.point(self.cursor);
+            if self.code.is_only_indentation_before(row, col) {
+                let from = self.cursor - col;
+                self.delete_text(from, self.cursor);
+                self.cursor = from;
+            } else {
+                self.delete_text(self.cursor - 1, self.cursor);
+                self.cursor -= 1;
+            }
         }
     }
 

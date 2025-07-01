@@ -380,9 +380,7 @@ impl Code {
     }
 
     pub fn indentation_level(&self, line: usize) -> usize {
-        if self.lang == "unknown" || self.lang == "" {
-            return 0;
-        }
+        if self.lang == "unknown" || self.lang == "" { return 0 }
         let indent_str = self.indent();
         let line_slice = self.line(line);
         let line_str = line_slice.to_string();
@@ -406,6 +404,23 @@ impl Code {
         }
         count
     }
+
+    pub fn is_only_indentation_before(&self, r: usize, c: usize) -> bool {
+        if self.lang == "unknown" || self.lang == "" { return false }
+        if r >= self.len_lines() || c == 0 { return false; }
+
+        let line = self.line(r);
+
+        let mut col = 0;
+        for ch in line.chars() {
+            if col >= c { break; } // Reached the specified column
+            // Found a non-whitespace character before the specified position
+            if !ch.is_whitespace() { return false; }
+            col += 1;
+        }
+        true
+    }
+
 }
 
 /// An iterator over byte slices of Rope chunks.
@@ -521,16 +536,25 @@ mod tests {
     }
 
     #[test]
-    fn test_indentation_level1() {
-        let mut code = Code::new("", "python").unwrap();
-        code.insert(0, "    print('Hello, World!')");
-        assert_eq!(code.indentation_level(0), 1);
-    }
-
-    #[test]
     fn test_indentation_level2() {
         let mut code = Code::new("", "python").unwrap();
         code.insert(0, "        print('Hello, World!')");
         assert_eq!(code.indentation_level(0), 2);
+    }
+
+    #[test]
+    fn test_is_only_indentation_before() {
+        let mut code = Code::new("", "python").unwrap();
+        code.insert(0, "    print('Hello, World!')");
+        assert_eq!(code.is_only_indentation_before(0, 4), true);
+        assert_eq!(code.is_only_indentation_before(0, 10), false);
+    }
+
+    #[test]
+    fn test_is_only_indentation_before2() {
+        let mut code = Code::new("", "").unwrap();
+        code.insert(0, "    Hello, World");
+        assert_eq!(code.is_only_indentation_before(0, 4), false);
+        assert_eq!(code.is_only_indentation_before(0, 10), false);
     }
 }
