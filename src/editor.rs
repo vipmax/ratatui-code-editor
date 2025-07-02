@@ -68,8 +68,6 @@ impl Editor {
             KeyCode::Char('d') if ctrl => self.handle_duplicate()?,
             KeyCode::Char('a') if ctrl => self.handle_select_all(),
 
-            KeyCode::Char('w') if ctrl => self.offset_x += 1,
-            KeyCode::Char('q') if ctrl => self.offset_x = self.offset_x.saturating_sub(1),
             KeyCode::Enter     if alt => self.handle_enter(true),
             KeyCode::Left      => self.handle_left(shift),
             KeyCode::Right     => self.handle_right(shift),
@@ -479,6 +477,10 @@ impl Editor {
         self.code.get_content()
     }
 
+    pub fn get_content_slice(&self, start: usize, end: usize) -> String {
+        self.code.slice(start, end)
+    }
+
     pub fn get_cursor(&self) -> usize {
         self.cursor
     }
@@ -573,6 +575,10 @@ impl Editor {
                 })
                 .collect()
         );
+    }
+
+    pub fn remove_marks(&mut self) {
+        self.marks = None;
     }
 }
 
