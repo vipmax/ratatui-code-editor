@@ -580,6 +580,14 @@ impl Editor {
     pub fn remove_marks(&mut self) {
         self.marks = None;
     }
+
+    pub fn has_marks(&self) -> bool {
+        self.marks.is_some()
+    }
+
+    pub fn get_marks(&self) -> Option<&Vec<(usize, usize, Color)>> {
+        self.marks.as_ref()
+    }
 }
 
 impl Widget for &Editor {
