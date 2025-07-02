@@ -380,7 +380,7 @@ impl Editor {
         self.cursor += text.chars().count();
     }
 
-    fn handle_undo(&mut self) {
+    pub fn handle_undo(&mut self) {
         let edits = self.code.undo();
         if let Some(edits) = edits {
             for edit in edits.iter().rev()  {
@@ -396,7 +396,7 @@ impl Editor {
         }
     }
 
-    fn handle_redo(&mut self) {
+    pub fn handle_redo(&mut self) {
         let edits = self.code.redo();
         if let Some(edits) = edits {
             for edit in edits {
