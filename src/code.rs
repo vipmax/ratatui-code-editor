@@ -537,21 +537,21 @@ mod tests {
     fn test_indentation_level0() {
         let mut code = Code::new("", "unknown").unwrap();
         code.insert(0, "    hello world");
-        assert_eq!(code.indentation_level(0), 0);
+        assert_eq!(code.indentation_level(0, 10), 0);
     }
 
     #[test]
     fn test_indentation_level() {
         let mut code = Code::new("", "python").unwrap();
         code.insert(0, "    print('Hello, World!')");
-        assert_eq!(code.indentation_level(0), 1);
+        assert_eq!(code.indentation_level(0, 10), 1);
     }
 
     #[test]
     fn test_indentation_level2() {
         let mut code = Code::new("", "python").unwrap();
         code.insert(0, "        print('Hello, World!')");
-        assert_eq!(code.indentation_level(0), 2);
+        assert_eq!(code.indentation_level(0, 10), 2);
     }
 
     #[test]
