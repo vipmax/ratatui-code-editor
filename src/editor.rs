@@ -56,7 +56,7 @@ impl Editor {
 
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        // let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
 
         match key.code {
             KeyCode::Char('z') if ctrl => self.handle_undo(),
@@ -70,12 +70,13 @@ impl Editor {
 
             KeyCode::Char('w') if ctrl => self.offset_x += 1,
             KeyCode::Char('q') if ctrl => self.offset_x = self.offset_x.saturating_sub(1),
+            KeyCode::Enter     if alt => self.handle_enter(true),
             KeyCode::Left      => self.handle_left(shift),
             KeyCode::Right     => self.handle_right(shift),
             KeyCode::Up        => self.handle_up(shift),
             KeyCode::Down      => self.handle_down(shift),
             KeyCode::Backspace => self.handle_delete(),
-            KeyCode::Enter     => self.handle_enter(),
+            KeyCode::Enter     => self.handle_enter(false),
             KeyCode::Char(c)   => self.handle_char(c),
             KeyCode::Tab       => self.handle_tab(),
             _ => {}
@@ -312,11 +313,14 @@ impl Editor {
         self.cursor += text.chars().count();
     }
 
-
-    pub fn handle_enter(&mut self) {
+    pub fn handle_enter(&mut self, move_end: bool) {
+        if move_end { // move cursor to the end of line
+            let (row, _) = self.code.point(self.cursor);
+            let line_end = self.code.offset(row, 0) + self.code.line_len(row);
+            self.cursor = line_end.saturating_sub(1);
+        }
         self.code.begin_batch();
         self.remove_selection();
-
         let (row, _) = self.code.point(self.cursor);
         let indent_level = self.code.indentation_level(row);
         let indent_text = self.code.indent().repeat(indent_level);
@@ -426,7 +430,7 @@ impl Editor {
         // make sure cursor is not out of bounds 
         let len = self.code.len_chars();
         self.cursor = self.cursor.min(len);
-        
+
         // make sure cursor is not out of bounds on the line
         let (row, col) = self.code.point(self.cursor);
         if col > self.code.line_len(row) {

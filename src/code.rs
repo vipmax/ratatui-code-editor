@@ -85,6 +85,11 @@ impl Code {
         let col = offset - line_start;
         (row, col)
     }
+
+    pub fn offset(&self, row: usize, col: usize) -> usize {
+        let line_start = self.content.line_to_char(row);
+        line_start + col
+    }
     
     pub fn get_content(&self) -> String {
         self.content.to_string()
