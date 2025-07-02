@@ -354,7 +354,7 @@ impl Editor {
     }
 
     fn handle_delete(&mut self) {
-        if let Some(selection) = &self.selection {
+        if let Some(selection) = &self.selection && !selection.is_empty() {
             let (start, end) = selection.sorted();
             self.delete_text(start, end);
             self.cursor = start;
