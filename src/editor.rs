@@ -90,7 +90,7 @@ impl Editor {
         let height = area.height as usize;
         let total_lines = self.code.len_lines();
         let max_line_number = total_lines.max(1);
-        let line_number_digits = max_line_number.to_string().len();
+        let line_number_digits = max_line_number.to_string().len().max(5);
         let line_number_width = (line_number_digits + 2) as usize;
 
         let line = self.code.char_to_line(self.cursor);
@@ -181,7 +181,7 @@ impl Editor {
     ) -> Option<usize> {
         let total_lines = self.code.len_lines();
         let max_line_number = total_lines.max(1);
-        let line_number_digits = max_line_number.to_string().len();
+        let line_number_digits = max_line_number.to_string().len().max(5);
         let line_number_width = (line_number_digits + 2) as u16;
     
         if mouse_y < area.top()
@@ -319,8 +319,8 @@ impl Editor {
         }
         self.code.begin_batch();
         self.remove_selection();
-        let (row, _) = self.code.point(self.cursor);
-        let indent_level = self.code.indentation_level(row);
+        let (row, col) = self.code.point(self.cursor);
+        let indent_level = self.code.indentation_level(row, col);
         let indent_text = self.code.indent().repeat(indent_level);
         let text = format!("\n{}", indent_text);
         self.code.insert(self.cursor, &text);
@@ -595,7 +595,7 @@ impl Widget for &Editor {
         let total_lines = self.code.len_lines();
         let total_chars = self.code.len_chars();
         let max_line_number = total_lines.max(1);
-        let line_number_digits = max_line_number.to_string().len();
+        let line_number_digits = max_line_number.to_string().len().max(5);
         let line_number_width = line_number_digits + 2;
 
         let (cursor_line, cursor_char_col) = self.code.point(self.cursor);
@@ -608,7 +608,7 @@ impl Widget for &Editor {
         for line_idx in self.offset_y..total_lines {
             if draw_y >= area.bottom() { break }
         
-            let line_number = format!("{:>width$}  ", line_idx + 1, width = line_number_digits);
+            let line_number = format!("{:^width$}", line_idx + 1, width = line_number_digits);
             buf.set_string(area.left(), draw_y, &line_number, line_number_style);
         
             let line_len = self.code.line_len(line_idx);

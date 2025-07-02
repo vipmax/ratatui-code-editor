@@ -384,22 +384,29 @@ impl Code {
         indent(&self.lang)
     }
 
-    pub fn indentation_level(&self, line: usize) -> usize {
+    pub fn indentation_level(&self, line: usize, col: usize) -> usize {
         if self.lang == "unknown" || self.lang == "" { return 0 }
         let indent_str = self.indent();
         let line_slice = self.line(line);
         let line_str = line_slice.to_string();
         let mut count = 0;
         let mut chars = line_str.chars().peekable();
+        let mut total_chars = 0;
 
         while chars.peek().is_some() {
             let mut matched = true;
+            let mut indent_chars = 0;
             for ch in indent_str.chars() {
                 if Some(&ch) != chars.peek() {
                     matched = false;
                     break;
                 }
                 chars.next();
+                indent_chars += 1;
+            }
+            total_chars += indent_chars;
+            if total_chars > col {
+                break;
             }
             if matched {
                 count += 1;
