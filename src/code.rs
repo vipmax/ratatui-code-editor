@@ -247,16 +247,12 @@ impl Code {
     pub fn highlight_interval<T: Copy>(
         &self, start: usize, end: usize, theme: &HashMap<String, T>,
     ) -> Vec<(usize, usize, T)> {
-        
         if start > start { panic!("invalid range")}
         let Some(query) = &self.query else { return vec![]; };
         let Some(tree) = &self.tree else { return vec![]; };
     
-        let start_byte = self.content.char_to_byte(start);
-        let end_byte = self.content.char_to_byte(end);
-    
         let mut query_cursor = QueryCursor::new();
-        query_cursor.set_byte_range(start_byte..end_byte);
+        query_cursor.set_byte_range(start..end);
     
         let root_node = tree.root_node();
         let capture_names = query.capture_names();

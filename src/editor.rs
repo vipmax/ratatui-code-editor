@@ -635,64 +635,143 @@ impl Widget for &Editor {
 
         // draw syntax highlighting
         if self.code.is_highlight() {
-        
-            // Render syntax highlighting for the visible portion of the text buffer.
-            // For each visible line within the viewport, limit the highlighting to the
-            // visible columns to avoid expensive processing of long lines outside the view.
-            // This improves performance by only querying Tree-sitter for the visible slice,
-            // then applying styles per character based on byte ranges returned by the syntax query.
-            
+            // Render syntax highlighting is separate for wide lines and regular.
+            // first we need to calculate max_line_len
+            let mut max_line_len = 0;
             for screen_y in 0..(area.height as usize) {
                 let line_idx = self.offset_y + screen_y;
                 if line_idx >= total_lines { break }
-            
                 let line_len = self.code.line_len(line_idx);
-                let max_x = (area.width as usize).saturating_sub(line_number_width);
-            
-                let line_start_char = self.code.line_to_char(line_idx);
-                let start_char = line_start_char + self.offset_x;
-                let visible_len = line_len.saturating_sub(self.offset_x);
-                let end = max_x.min(visible_len);
-                let end_char = start_char + end;
+                max_line_len = max_line_len.max(line_len);
+            }
 
-                if start_char > total_chars || end_char > total_chars {
-                    continue; // last line offset case 
-                }
+            let wide_lines_found = if max_line_len > 1000 { true } else { false };
+            
+            if wide_lines_found {
+                // Render syntax highlighting for the visible portion of the text buffer.
+                // For each visible line within the viewport, limit the highlighting to the
+                // visible columns to avoid expensive processing of long lines outside the view.
+                // This improves performance by only querying Tree-sitter for the visible slice,
+                // then applying styles per character based on byte ranges returned by the syntax query.
 
-                let chars = self.code.char_slice(start_char, end_char);
+                for screen_y in 0..(area.height as usize) {
+                    let line_idx = self.offset_y + screen_y;
+                    if line_idx >= total_lines { break }
+                
+                    let line_len = self.code.line_len(line_idx);
+                    let max_x = (area.width as usize).saturating_sub(line_number_width);
+                
+                    let line_start_char = self.code.line_to_char(line_idx);
+                    let start_char = line_start_char + self.offset_x;
+                    let visible_len = line_len.saturating_sub(self.offset_x);
+                    let end = max_x.min(visible_len);
+                    let end_char = start_char + end;
 
-                let start_byte = self.code.char_to_byte(start_char);
-            
-                let highlights = self.code.highlight_interval(
-                    start_char, end_char, &self.theme
-                );
-            
-                let mut x = 0;
-                let mut byte_idx_in_rope = start_byte;
-            
-                for ch in chars.chars().take(max_x) {
-                    if x >= max_x { break }
-            
-                    let ch_width = UnicodeWidthChar::width(ch).unwrap_or(1);
-                    let ch_len = ch.len_utf8();
-            
-                    let draw_x = area.left() + line_number_width as u16 + x as u16;
-                    let draw_y = area.top() + screen_y as u16;
-            
-                    let mut style = Style::default();
-                    for &(start, end, s) in &highlights {
-                        if start <= byte_idx_in_rope && byte_idx_in_rope < end {
-                            style = s;
-                            break;
-                        }
+                    if start_char > total_chars || end_char > total_chars {
+                        continue; // last line offset case 
                     }
-            
-                    buf[(draw_x, draw_y)].set_style(style);
-            
-                    x += ch_width;
-                    byte_idx_in_rope += ch_len;
+
+                    let chars = self.code.char_slice(start_char, end_char);
+
+                    let start_byte = self.code.char_to_byte(start_char);
+                    let end_byte = self.code.char_to_byte(end_char);
+                
+                    let highlights = self.code.highlight_interval(
+                        start_byte, end_byte, &self.theme
+                    );
+                
+                    let mut x = 0;
+                    let mut byte_idx_in_rope = start_byte;
+                
+                    for ch in chars.chars().take(max_x) {
+                        if x >= max_x { break }
+                
+                        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(1);
+                        let ch_len = ch.len_utf8();
+                
+                        let draw_x = area.left() + line_number_width as u16 + x as u16;
+                        let draw_y = area.top() + screen_y as u16;
+                
+                        let mut style = Style::default();
+                        for &(start, end, s) in &highlights {
+                            if start <= byte_idx_in_rope && byte_idx_in_rope < end {
+                                style = s;
+                                break;
+                            }
+                        }
+                
+                        buf[(draw_x, draw_y)].set_style(style);
+                
+                        x += ch_width;
+                        byte_idx_in_rope += ch_len;
+                    }
                 }
             }
+            else {
+                // Render syntax highlighting for the visible portion of the text buffer.
+                // This one improves performance by querying Tree-sitter only one time
+                let start_line = self.offset_y;
+                let end_line = (self.offset_y + area.height as usize).min(total_lines);
+                let s_char = self.code.line_to_char(start_line);
+                let e_char = self.code.line_to_char(end_line.min(total_lines));
+                let s_byte = self.code.char_to_byte(s_char);
+                let e_byte = self.code.char_to_byte(e_char);
+
+                let highlights = self.code.highlight_interval(
+                    s_byte, e_byte, &self.theme
+                );
+
+                for screen_y in 0..(area.height as usize) {
+                    let line_idx = self.offset_y + screen_y;
+                    if line_idx >= total_lines { break }
+                
+                    let line_len = self.code.line_len(line_idx);
+                    let max_x = (area.width as usize).saturating_sub(line_number_width);
+                
+                    let line_start_char = self.code.line_to_char(line_idx);
+                    let start_char = line_start_char + self.offset_x;
+                    let visible_len = line_len.saturating_sub(self.offset_x);
+                    let end = max_x.min(visible_len);
+                    let end_char = start_char + end;
+
+                    if start_char > total_chars || end_char > total_chars {
+                        continue; // last line offset case 
+                    }
+
+                    let chars = self.code.char_slice(start_char, end_char);
+
+                    let start_byte = self.code.char_to_byte(start_char);
+                    let end_byte = self.code.char_to_byte(end_char);
+
+                    let line_highlights: Vec<_> = highlights.iter()
+                        .filter(|&&(start, end, _)| start < end_byte && end > start_byte)
+                        .collect();
+                
+                    let mut x = 0;
+                    let mut byte_idx_in_rope = start_byte;
+                
+                    for ch in chars.chars().take(max_x) {
+                        if x >= max_x { break }
+                
+                        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(1);
+                        let ch_len = ch.len_utf8();
+                
+                        let draw_x = area.left() + line_number_width as u16 + x as u16;
+                        let draw_y = area.top() + screen_y as u16;
+                                        
+                        for &(start, end, s) in &line_highlights {
+                            if *start <= byte_idx_in_rope && byte_idx_in_rope < *end {
+                                buf[(draw_x, draw_y)].set_style(*s);
+                                break;
+                            }
+                        }
+                
+                        x += ch_width;
+                        byte_idx_in_rope += ch_len;
+                    }
+                }
+            }
+
         }
 
         // draw selection

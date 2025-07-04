@@ -17,6 +17,7 @@ A code editor widget for [Ratatui](https://github.com/ratatui/ratatui), built wi
 - 🎯 **Text Selection** - Visual text selection with keyboard and mouse
 - 🌈 **Themes** - Customizable color themes for syntax highlighting
 - 📱 **Responsive** - Adapts to terminal window size changes
+- 🔖 **Visual Highlight Marks** - Highlight specific regions in the editor
 
 ## Supported Languages
 
@@ -145,7 +146,7 @@ cargo run --release --example editor <filename>
 
 The editor comes with built-in themes:
 
-- `vesper` - Dark theme with purple accents
+- `vesper` - Dark theme default
 - Custom themes can be created by providing color mappings
 
 ```rust
