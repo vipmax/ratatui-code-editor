@@ -118,8 +118,14 @@ impl Code {
         self.content.char_to_byte(char_idx)
     }
 
-    pub fn line_len(&self, line_idx: usize) -> usize {
-        self.content.line(line_idx).len_chars()
+    pub fn line_len(&self, idx: usize) -> usize {
+        let line = self.content.line(idx);
+        let len = line.len_chars();
+        if idx == self.content.len_lines() - 1 {
+            len
+        } else {
+            len.saturating_sub(1)
+        }
     }
     
     pub fn line(&self, line_idx: usize) -> RopeSlice{

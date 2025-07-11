@@ -19,6 +19,17 @@ A code editor widget for [Ratatui](https://github.com/ratatui/ratatui), built wi
 - 📱 **Responsive** - Adapts to terminal window size changes
 - 🔖 **Visual Highlight Marks** - Highlight specific regions in the editor
 
+## Syntax Highlighting: Fast, Cached, and Wide-Row Ready
+
+The Ratatui Code Editor features blazing fast syntax highlighting powered by [Tree-sitter](https://tree-sitter.github.io/). Tree-sitter parses your code in real time, enabling accurate and context-aware highlighting for all supported languages.
+
+**Performance Features:**
+- **Super Fast:** Only the visible portion of the code is highlighted on each render, making even large files feel snappy.
+- **Smart Caching:** Highlighting results are cached per visible region, so scrolling and editing are smooth and efficient.
+- **Wide Row Support:** Handles long lines and wide code gracefully, ensuring correct highlighting and cursor placement even with complex Unicode or tab characters.
+
+This approach means you get instant, editor-quality highlighting in your terminal, with no lag—even for big files or wide code blocks.
+
 ## Supported Languages
 
 - Rust
@@ -125,6 +136,10 @@ cargo run --release --example editor <filename>
 - **Delete** - Delete characters
 - **Enter** - Insert new line
 - **Tab** - Insert tab or spaces
+- **Ctrl+D** - Duplicate
+- **Ctrl+X** - Cut
+- **Alt+Enter** - go to next line 
+
 
 ### Selection
 - **Shift + Arrow Keys** - Select text
