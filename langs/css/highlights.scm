@@ -13,14 +13,14 @@
 (function_name) @function
 (id_name) @identifier
 (namespace_name) @namespace
-(property_name) @function
+(property_name) @variable
 
 (string_value) @string
-((color_value) "#") @string.special
-(color_value) @string.special
+((color_value) "#") @string
+(color_value) @string
 
-(integer_value) @constant.numeric.integer
-(float_value) @constant.numeric.float
+(integer_value) @constant
+(float_value) @constant
 (plain_value) @constant
 
 [

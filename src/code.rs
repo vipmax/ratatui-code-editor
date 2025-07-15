@@ -2,11 +2,13 @@ use anyhow::{Result, anyhow};
 use ropey::{Rope, RopeSlice};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{InputEdit, Point, QueryCursor};
-use tree_sitter::{Language, Parser, Query, Tree};
+use tree_sitter::{Language, Parser, Query, Tree, Node};
 use crate::history::{History, EditBatch, Edit, EditKind};
 use rust_embed::RustEmbed;
 use std::collections::HashMap;
 use crate::utils::indent;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(RustEmbed)]
 #[folder = ""]
@@ -22,22 +24,27 @@ pub struct Code {
     applying_history: bool,
     history: History,
     current_batch: EditBatch,
+
+    injection_parsers: Option<HashMap<String, Rc<RefCell<Parser>>>>,
+    injection_queries: Option<HashMap<String, Query>>,
 }
 
 impl Code {
     /// Create a new `Code` instance with the given text and language.
     pub fn new(text: &str, lang: &str) -> Result<Self> {
-        let (tree, parser, query) = match Self::get_language(lang) {
-            Some(language) => {
-                let highlights = Self::get_highlights(lang)?;
-                let mut parser = Parser::new();
-                parser.set_language(&language)?;
-                let tree = parser.parse(text, None);
-                let query = Query::new(&language, &highlights)?;
-                (tree, Some(parser), Some(query))
-            }
-            None => (None, None, None),
-        };
+        let (tree, parser, query, injection_parsers, injection_queries) = 
+            match Self::get_language(lang) {
+                Some(language) => {
+                    let highlights = Self::get_highlights(lang)?;
+                    let mut parser = Parser::new();
+                    parser.set_language(&language)?;
+                    let tree = parser.parse(text, None);
+                    let query = Query::new(&language, &highlights)?;
+                    let (iparsers, iqueries) = Self::init_injections(&query)?;
+                    (tree, Some(parser), Some(query), Some(iparsers), Some(iqueries))
+                }
+                None => (None, None, None, None, None),
+            };
         
         Ok(Self {
             content: Rope::from_str(text),
@@ -46,6 +53,8 @@ impl Code {
             applying_history: true,
             history: History::new(1000),
             current_batch: Vec::new(),
+            injection_parsers,
+            injection_queries,
         })
     }
     
@@ -77,6 +86,35 @@ impl Code {
         let highlights_bytes = highlights_bytes.data.as_ref();
         let highlights = std::str::from_utf8(highlights_bytes)?;
         Ok(highlights.to_string())
+    }
+
+    fn init_injections(query: &Query) -> anyhow::Result<(
+        HashMap<String, Rc<RefCell<Parser>>>,
+        HashMap<String, Query>,
+    )> {
+        let mut injection_parsers = HashMap::new();
+        let mut injection_queries = HashMap::new();
+
+        for name in query.capture_names() {
+            if let Some(lang) = name.strip_prefix("injection.content.") {
+                if injection_parsers.contains_key(lang) {
+                    continue; // уже добавлено
+                }
+                if let Some(language) = Self::get_language(lang) {
+                    let mut parser = Parser::new();
+                    parser.set_language(&language)?;
+                    let highlights = Self::get_highlights(lang)?;
+                    let inj_query = Query::new(&language, &highlights)?;
+
+                    injection_parsers.insert(lang.to_string(), Rc::new(RefCell::new(parser)));
+                    injection_queries.insert(lang.to_string(), inj_query);
+                } else {
+                    eprintln!("⚠️ Unknown injection language: {}", lang);
+                }
+            }
+        }
+
+        Ok((injection_parsers, injection_queries))
     }
 
     pub fn point(&self, offset: usize) -> (usize, usize) {
@@ -250,45 +288,135 @@ impl Code {
     
     /// Highlights the interval between `start` and `end` char indices.
     /// Returns a list of (start byte, end byte, token_name) for highlighting.
+    // pub fn highlight_interval<T: Copy>(
+    //     &self, start: usize, end: usize, theme: &HashMap<String, T>,
+    // ) -> Vec<(usize, usize, T)> {
+    //     if start > start { panic!("invalid range")}
+    //     let Some(query) = &self.query else { return vec![]; };
+    //     let Some(tree) = &self.tree else { return vec![]; };
+    
+    //     let mut query_cursor = QueryCursor::new();
+    //     query_cursor.set_byte_range(start..end);
+    
+    //     let root_node = tree.root_node();
+    //     let capture_names = query.capture_names();
+        
+    //     let mut query_matches = query_cursor.matches(
+    //         query, root_node, RopeProvider(self.content.slice(..))
+    //     );
+    
+    //     let mut unsorted: Vec<(usize, usize, usize, T)> = Vec::new();
+    
+    //     while let Some(m) = query_matches.next() {
+    //         for capture in m.captures {
+    //             let name = capture_names[capture.index as usize];
+    //             let node_text = self.content
+    //                 .byte_slice(capture.node.start_byte()..capture.node.end_byte()).as_str()
+    //                 .unwrap_or_default(); // debug
+
+    //             if let Some(value) = theme.get(name) {
+    //                 unsorted.push((
+    //                     capture.node.start_byte(),
+    //                     capture.node.end_byte(),
+    //                     capture.index as usize,
+    //                     *value,
+    //                 ));
+    //             } else if let Some(lang) = name.strip_prefix("injection.content.") {
+    //                 let injection_highlights = self.highlight_injection(
+    //                     lang, capture.node, theme
+    //                 );
+    //                 unsorted.extend(injection_highlights);
+    //             }
+    //         }
+    //     }
+    
+    //     // Sort by length descending, then by capture index
+    //     unsorted.sort_by(|a, b| {
+    //         let len_a = a.1 - a.0;
+    //         let len_b = b.1 - b.0;
+    //         match len_b.cmp(&len_a) {
+    //             std::cmp::Ordering::Equal => b.2.cmp(&a.2),
+    //             other => other,
+    //         }
+    //     });
+    
+    //     unsorted.into_iter()
+    //         .map(|(start, end, _, value)| (start, end, value))
+    //         .collect()
+    // }
+
+    // fn highlight_injection<T: Copy>(
+    //     &self, lang: &str, node: Node, theme: &HashMap<String, T>,
+    // ) -> Vec<(usize, usize, usize, T)> {
+    //     let Some(injection_parsers) = &self.injection_parsers else { return vec![]; };
+    //     let Some(injection_queries) = &self.injection_queries else { return vec![]; };
+
+    //     let Some(inj_parser) = injection_parsers.get(lang) else { return vec![]; };
+    //     let Some(inj_query) = injection_queries.get(lang) else { return vec![]; };
+
+    //     let start_byte = node.start_byte();
+    //     let end_byte = node.end_byte();
+    //     let text = self.content.byte_slice(start_byte..end_byte);
+
+    //     let mut parser = inj_parser.borrow_mut();
+
+    //     let Some(tree) = parser.parse(text.to_string(), None) else { return vec![]; };
+
+    //     let mut cursor = QueryCursor::new();
+    //     cursor.set_byte_range(0..(end_byte - start_byte));
+
+    //     let mut results = Vec::new();
+
+    //     let mut matches = cursor.matches(inj_query, tree.root_node(), RopeProvider(text));
+
+    //     while let Some(m) = matches.next() {
+    //         for capture in m.captures {
+    //             let name = inj_query.capture_names()[capture.index as usize];
+    //             let capture_start_byte = capture.node.start_byte() + start_byte;
+    //             let capture_end_byte = capture.node.end_byte() + start_byte;
+
+    //             let node_text = self.content
+    //                 .byte_slice(capture_start_byte..capture_end_byte).as_str()
+    //                 .unwrap_or_default(); // debug
+
+    //             if let Some(value) = theme.get(name) {
+    //                 results.push((
+    //                     capture_start_byte, 
+    //                     capture_end_byte,
+    //                     capture.index as usize, 
+    //                     *value,
+    //                 ));
+    //             }
+    //         }
+    //     }
+
+    //     results
+    // }
+    
     pub fn highlight_interval<T: Copy>(
         &self, start: usize, end: usize, theme: &HashMap<String, T>,
     ) -> Vec<(usize, usize, T)> {
-        if start > start { panic!("invalid range")}
+        if start > end { panic!("Invalid range") }
+
         let Some(query) = &self.query else { return vec![]; };
         let Some(tree) = &self.tree else { return vec![]; };
-    
-        let mut query_cursor = QueryCursor::new();
-        query_cursor.set_byte_range(start..end);
-    
-        let root_node = tree.root_node();
-        let capture_names = query.capture_names();
-        
-        let mut query_matches = query_cursor.matches(
-            query, root_node, RopeProvider(self.content.slice(..))
-        );
-    
-        let mut unsorted: Vec<(usize, usize, usize, T)> = Vec::new();
-    
-        while let Some(m) = query_matches.next() {
-            for capture in m.captures {
-                let name = capture_names[capture.index as usize];
-                // let node_text = self.content
-                //     .byte_slice(capture.node.start_byte()..capture.node.end_byte()).as_str()
-                //     .unwrap_or_default(); // debug
 
-                if let Some(value) = theme.get(name) {
-                    unsorted.push((
-                        capture.node.start_byte(),
-                        capture.node.end_byte(),
-                        capture.index as usize,
-                        *value,
-                    ));
-                }
-            }
-        }
-    
-        // Sort by length descending, then by capture index
-        unsorted.sort_by(|a, b| {
+        let text = self.content.slice(..);
+        let root_node = tree.root_node();
+
+        let mut results = Self::highlight(
+            text,
+            start,
+            end,
+            query,
+            root_node,
+            theme,
+            self.injection_parsers.as_ref(),
+            self.injection_queries.as_ref(),
+        );
+
+        // Сортировка: сначала по убыванию длины, затем по убыванию индекса
+        results.sort_by(|a, b| {
             let len_a = a.1 - a.0;
             let len_b = b.1 - b.0;
             match len_b.cmp(&len_a) {
@@ -296,12 +424,77 @@ impl Code {
                 other => other,
             }
         });
-    
-        unsorted.into_iter()
+
+        results
+            .into_iter()
             .map(|(start, end, _, value)| (start, end, value))
             .collect()
     }
-    
+
+    fn highlight<T: Copy>(
+        text: RopeSlice<'_>,
+        start_byte: usize,
+        end_byte: usize,
+        query: &Query,
+        root_node: Node,
+        theme: &HashMap<String, T>,
+        injection_parsers: Option<&HashMap<String, Rc<RefCell<Parser>>>>,
+        injection_queries: Option<&HashMap<String, Query>>,
+    ) -> Vec<(usize, usize, usize, T)> {
+        let mut cursor = QueryCursor::new();
+        cursor.set_byte_range(start_byte..end_byte);
+
+        let mut matches = cursor.matches(query, root_node, RopeProvider(text));
+
+        let mut results = Vec::new();
+        let capture_names = query.capture_names();
+
+        while let Some(m) = matches.next() {
+            for capture in m.captures {
+                let name = capture_names[capture.index as usize];
+
+                if let Some(value) = theme.get(name) {
+                    results.push((
+                        capture.node.start_byte(),
+                        capture.node.end_byte(),
+                        capture.index as usize,
+                        *value,
+                    ));
+                } else if let Some(lang) = name.strip_prefix("injection.content.") {
+                    let Some(injection_parsers) = injection_parsers else { continue };
+                    let Some(injection_queries) = injection_queries else { continue };
+                    let Some(parser) = injection_parsers.get(lang) else { continue };
+                    let Some(injection_query) = injection_queries.get(lang) else { continue };
+
+                    let start = capture.node.start_byte();
+                    let end = capture.node.end_byte();
+                    let slice = text.byte_slice(start..end);
+
+                    let mut parser = parser.borrow_mut();
+                    let Some(inj_tree) = parser.parse(slice.to_string(), None) else { continue };
+
+                    let injection_results = Self::highlight(
+                        slice,
+                        0,
+                        end - start,
+                        injection_query,
+                        inj_tree.root_node(),
+                        theme,
+                        injection_parsers.into(),
+                        injection_queries.into(),
+                    );
+
+                    for (s, e, i, v) in injection_results {
+                        results.push((s + start, e + start, i, v));
+                    }
+                }
+            }
+        }
+
+        results
+    }
+
+
     pub fn undo(&mut self) -> Option<EditBatch> {
         let batch = self.history.undo()?;
         self.applying_history = false;

@@ -29,7 +29,7 @@ pub fn get_lang(filename: &str) -> String {
 pub fn indent(lang: &str) -> String {
     match lang {
         "rust" |"python" | "php" | "toml" | "c"  | "cpp" |
-        "zig" | "kotlin" | "erlang" | "sql" => {
+        "zig" | "kotlin" | "erlang" | "html" | "sql" => {
             "    ".to_string()
         },
         "go" | "c_sharp" => {

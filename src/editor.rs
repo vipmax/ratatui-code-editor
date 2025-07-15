@@ -5,14 +5,13 @@ use crossterm::event::{
 use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::{prelude::*, widgets::Widget};
-use std::collections::HashMap;
 use unicode_width::UnicodeWidthChar;
 use std::time::{Instant, Duration};
 use crate::code::Code;
 use crate::history::{EditBatch, EditKind};
 use crate::selection::Selection;
 use crate::utils;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::cell::RefCell;
 
 // keyword and ratatui style
@@ -20,7 +19,7 @@ type Theme = HashMap<String, Style>;
 // start byte, end byte, style
 type Hightlight = (usize, usize, Style);
 // start offset, end offset
-type HightlightCache = BTreeMap<(usize, usize), Vec<Hightlight>>;
+type HightlightCache = HashMap<(usize, usize), Vec<Hightlight>>;
 
 pub struct Editor {
     code: Code,
@@ -43,7 +42,7 @@ impl Editor {
             .unwrap();
 
         let theme = Self::build_theme(&theme);
-        let highlights_cache = RefCell::new(BTreeMap::new());
+        let highlights_cache = RefCell::new(HashMap::new());
 
         Self {
             code,
@@ -111,10 +110,11 @@ impl Editor {
         let visible_width = width.saturating_sub(line_number_width);
         let visible_height = height;
     
+        let step_size = 10;
         if col < self.offset_x {
-            self.offset_x = col;
+            self.offset_x = col.saturating_sub(step_size);
         } else if col >= self.offset_x + visible_width {
-            self.offset_x = col.saturating_sub(visible_width - 1);
+            self.offset_x = col.saturating_sub(visible_width - step_size);
         }
     
         if line < self.offset_y {
@@ -125,9 +125,7 @@ impl Editor {
     }
 
     pub fn mouse(
-        &mut self,
-        mouse: MouseEvent,
-        area: &Rect,
+        &mut self, mouse: MouseEvent, area: &Rect,
     ) -> anyhow::Result<()> {
 
         match mouse.kind {
@@ -726,7 +724,7 @@ impl Widget for &Editor {
         }
 
         // draw selection
-        if let Some(selection) = self.selection {
+        if let Some(selection) = self.selection && !selection.is_empty() {
             let start = selection.start.min(selection.end);
             let end = selection.start.max(selection.end);
         
