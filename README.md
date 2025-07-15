@@ -38,6 +38,7 @@ This approach means you get instant, editor-quality highlighting in your termina
 - TypeScript
 - C
 - C++
+- Go
 - C#
 - Java
 - Html
@@ -46,8 +47,7 @@ This approach means you get instant, editor-quality highlighting in your termina
 - Toml
 - Json
 - Bash
-
-
+- Markdown
 
 ## Quick Start
 

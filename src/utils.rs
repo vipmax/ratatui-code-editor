@@ -21,6 +21,7 @@ pub fn get_lang(filename: &str) -> String {
         "toml" => "toml",
         "yaml" | "yml" => "yaml",
         "sh" | "bash" => "shell",
+        "md" => "markdown",
         _ => "unknown",
     }
     .to_string()

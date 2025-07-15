@@ -75,6 +75,8 @@ impl Code {
             "json" => Some(tree_sitter_json::LANGUAGE.into()),
             "toml" => Some(tree_sitter_toml_ng::LANGUAGE.into()),
             "shell" => Some(tree_sitter_bash::LANGUAGE.into()),
+            "markdown" => Some(tree_sitter_md::LANGUAGE.into()),
+            "markdown-inline" => Some(tree_sitter_md::INLINE_LANGUAGE.into()),
             _ => None,
         }
     }
@@ -287,112 +289,7 @@ impl Code {
     }
     
     /// Highlights the interval between `start` and `end` char indices.
-    /// Returns a list of (start byte, end byte, token_name) for highlighting.
-    // pub fn highlight_interval<T: Copy>(
-    //     &self, start: usize, end: usize, theme: &HashMap<String, T>,
-    // ) -> Vec<(usize, usize, T)> {
-    //     if start > start { panic!("invalid range")}
-    //     let Some(query) = &self.query else { return vec![]; };
-    //     let Some(tree) = &self.tree else { return vec![]; };
-    
-    //     let mut query_cursor = QueryCursor::new();
-    //     query_cursor.set_byte_range(start..end);
-    
-    //     let root_node = tree.root_node();
-    //     let capture_names = query.capture_names();
-        
-    //     let mut query_matches = query_cursor.matches(
-    //         query, root_node, RopeProvider(self.content.slice(..))
-    //     );
-    
-    //     let mut unsorted: Vec<(usize, usize, usize, T)> = Vec::new();
-    
-    //     while let Some(m) = query_matches.next() {
-    //         for capture in m.captures {
-    //             let name = capture_names[capture.index as usize];
-    //             let node_text = self.content
-    //                 .byte_slice(capture.node.start_byte()..capture.node.end_byte()).as_str()
-    //                 .unwrap_or_default(); // debug
-
-    //             if let Some(value) = theme.get(name) {
-    //                 unsorted.push((
-    //                     capture.node.start_byte(),
-    //                     capture.node.end_byte(),
-    //                     capture.index as usize,
-    //                     *value,
-    //                 ));
-    //             } else if let Some(lang) = name.strip_prefix("injection.content.") {
-    //                 let injection_highlights = self.highlight_injection(
-    //                     lang, capture.node, theme
-    //                 );
-    //                 unsorted.extend(injection_highlights);
-    //             }
-    //         }
-    //     }
-    
-    //     // Sort by length descending, then by capture index
-    //     unsorted.sort_by(|a, b| {
-    //         let len_a = a.1 - a.0;
-    //         let len_b = b.1 - b.0;
-    //         match len_b.cmp(&len_a) {
-    //             std::cmp::Ordering::Equal => b.2.cmp(&a.2),
-    //             other => other,
-    //         }
-    //     });
-    
-    //     unsorted.into_iter()
-    //         .map(|(start, end, _, value)| (start, end, value))
-    //         .collect()
-    // }
-
-    // fn highlight_injection<T: Copy>(
-    //     &self, lang: &str, node: Node, theme: &HashMap<String, T>,
-    // ) -> Vec<(usize, usize, usize, T)> {
-    //     let Some(injection_parsers) = &self.injection_parsers else { return vec![]; };
-    //     let Some(injection_queries) = &self.injection_queries else { return vec![]; };
-
-    //     let Some(inj_parser) = injection_parsers.get(lang) else { return vec![]; };
-    //     let Some(inj_query) = injection_queries.get(lang) else { return vec![]; };
-
-    //     let start_byte = node.start_byte();
-    //     let end_byte = node.end_byte();
-    //     let text = self.content.byte_slice(start_byte..end_byte);
-
-    //     let mut parser = inj_parser.borrow_mut();
-
-    //     let Some(tree) = parser.parse(text.to_string(), None) else { return vec![]; };
-
-    //     let mut cursor = QueryCursor::new();
-    //     cursor.set_byte_range(0..(end_byte - start_byte));
-
-    //     let mut results = Vec::new();
-
-    //     let mut matches = cursor.matches(inj_query, tree.root_node(), RopeProvider(text));
-
-    //     while let Some(m) = matches.next() {
-    //         for capture in m.captures {
-    //             let name = inj_query.capture_names()[capture.index as usize];
-    //             let capture_start_byte = capture.node.start_byte() + start_byte;
-    //             let capture_end_byte = capture.node.end_byte() + start_byte;
-
-    //             let node_text = self.content
-    //                 .byte_slice(capture_start_byte..capture_end_byte).as_str()
-    //                 .unwrap_or_default(); // debug
-
-    //             if let Some(value) = theme.get(name) {
-    //                 results.push((
-    //                     capture_start_byte, 
-    //                     capture_end_byte,
-    //                     capture.index as usize, 
-    //                     *value,
-    //                 ));
-    //             }
-    //         }
-    //     }
-
-    //     results
-    // }
-    
+    /// Returns a list of (start byte, end byte, token_name) for highlighting. 
     pub fn highlight_interval<T: Copy>(
         &self, start: usize, end: usize, theme: &HashMap<String, T>,
     ) -> Vec<(usize, usize, T)> {
@@ -415,7 +312,6 @@ impl Code {
             self.injection_queries.as_ref(),
         );
 
-        // Сортировка: сначала по убыванию длины, затем по убыванию индекса
         results.sort_by(|a, b| {
             let len_a = a.1 - a.0;
             let len_b = b.1 - b.0;
@@ -452,7 +348,6 @@ impl Code {
         while let Some(m) = matches.next() {
             for capture in m.captures {
                 let name = capture_names[capture.index as usize];
-
                 if let Some(value) = theme.get(name) {
                     results.push((
                         capture.node.start_byte(),
