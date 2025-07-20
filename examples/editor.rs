@@ -9,7 +9,7 @@ use crossterm::{
         disable_raw_mode, enable_raw_mode
     },
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{Terminal, backend::CrosstermBackend, layout::Position};
 use std::io::stdout;
 use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::theme::vesper;
@@ -21,7 +21,7 @@ fn main() -> anyhow::Result<()> {
     let filename = if args.len() > 1 {
         &args[1]
     } else {
-        eprintln!("Usage: cargo run --release --example main <filename>");
+        eprintln!("Usage: cargo run --release --example editor <filename>");
         return Ok(());
     };
     
@@ -46,6 +46,11 @@ fn main() -> anyhow::Result<()> {
             let area = f.area();
             editor_area = area;
             f.render_widget(&editor, area);
+            
+            let cursor = editor.get_visible_cursor(&area);
+            if let Some((x,y)) = cursor {
+                f.set_cursor_position(Position::new(x, y));
+            }
         })?;
 
         if event::poll(std::time::Duration::from_millis(100))? {

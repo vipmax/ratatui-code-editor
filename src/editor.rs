@@ -618,6 +618,46 @@ impl Editor {
     fn reset_highlight_cache(&self) {
         self.highlights_cache.borrow_mut().clear();
     }
+    
+    /// calculates visible cursor position 
+    pub fn get_visible_cursor(
+        &self, area: &Rect
+    ) -> Option<(u16, u16)> {
+        let total_lines = self.code.len_lines();
+        let max_line_number = total_lines.max(1);
+        let line_number_digits = max_line_number.to_string().len().max(5);
+        let line_number_width = line_number_digits + 2;
+
+        let (cursor_line, cursor_char_col) = self.code.point(self.cursor);
+        
+        if cursor_line >= self.offset_y && cursor_line < self.offset_y + area.height as usize {
+            let line_start_char = self.code.line_to_char(cursor_line);
+            let line_len = self.code.line_len(cursor_line);
+        
+            let max_x = (area.width as usize).saturating_sub(line_number_width);
+            let start_col = self.offset_x;
+                
+            let cursor_visual_col: usize = self.code
+                .char_slice(line_start_char, line_start_char + cursor_char_col.min(line_len))
+                .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1)).sum();
+        
+            let offset_visual_col: usize = self.code
+                .char_slice(line_start_char, line_start_char + start_col.min(line_len))
+                .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1)).sum();
+        
+            let relative_visual_col = cursor_visual_col.saturating_sub(offset_visual_col);
+            let visible_x = relative_visual_col.min(max_x);
+        
+            let cursor_x = area.left() + (line_number_width + visible_x) as u16;
+            let cursor_y = area.top() + (cursor_line - self.offset_y) as u16;
+        
+            if cursor_x < area.right() && cursor_y < area.bottom() {
+                return Some((cursor_x, cursor_y));
+            }
+        }
+        
+        return None;
+    }
 }
 
 impl Widget for &Editor {
@@ -628,7 +668,6 @@ impl Widget for &Editor {
         let line_number_digits = max_line_number.to_string().len().max(5);
         let line_number_width = line_number_digits + 2;
 
-        let (cursor_line, cursor_char_col) = self.code.point(self.cursor);
         let mut draw_y = area.top();
         
         let line_number_style = Style::default().fg(Color::DarkGray);
@@ -822,36 +861,5 @@ impl Widget for &Editor {
                 }
             }
         }
-
-
-        // draw cursor
-        if cursor_line >= self.offset_y && cursor_line < self.offset_y + area.height as usize {
-            let line_start_char = self.code.line_to_char(cursor_line);
-            let line_len = self.code.line_len(cursor_line);
-        
-            let max_x = (area.width as usize).saturating_sub(line_number_width);
-            let start_col = self.offset_x;
-                
-            let cursor_visual_col: usize = self.code
-                .char_slice(line_start_char, line_start_char + cursor_char_col.min(line_len))
-                .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1)).sum();
-        
-            let offset_visual_col: usize = self.code
-                .char_slice(line_start_char, line_start_char + start_col.min(line_len))
-                .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1)).sum();
-        
-            let relative_visual_col = cursor_visual_col.saturating_sub(offset_visual_col);
-            let visible_x = relative_visual_col.min(max_x);
-        
-            let cursor_x = area.left() + line_number_width as u16 + visible_x as u16;
-            let cursor_y = area.top() + (cursor_line - self.offset_y) as u16;
-        
-            if cursor_x < area.right() && cursor_y < area.bottom() {
-                buf[(cursor_x, cursor_y)].set_style(
-                    Style::default().bg(Color::White).fg(Color::Black)
-                );
-            }
-        }
-
     }
 }

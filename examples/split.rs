@@ -10,7 +10,7 @@ use crossterm::{
     },
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
-use ratatui::layout::{Layout, Constraint, Direction, Rect};
+use ratatui::layout::{Layout, Constraint, Direction, Rect, Position};
 use ratatui::widgets::{Block, Borders};
 use crossterm::event::MouseEvent;
 use std::io::stdout;
@@ -65,6 +65,15 @@ fn main() -> anyhow::Result<()> {
             f.render_widget(block2, chunks[1]);
             f.render_widget(&editor1, editor1_area);
             f.render_widget(&editor2, editor2_area);
+            
+            let cursor = match active_editor {
+                0 => editor1.get_visible_cursor(&editor1_area),
+                _ => editor2.get_visible_cursor(&editor2_area),
+            };
+            
+            if let Some((x,y)) = cursor {
+                f.set_cursor_position(Position::new(x, y));
+            }
         })?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
