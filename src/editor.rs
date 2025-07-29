@@ -96,7 +96,7 @@ impl Editor {
         Ok(())
     }
     
-    fn focus(&mut self, area: &Rect) {
+    pub fn focus(&mut self, area: &Rect) {
         let width = area.width as usize;
         let height = area.height as usize;
         let total_lines = self.code.len_lines();
