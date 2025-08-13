@@ -30,6 +30,7 @@ pub struct Editor {
     selection: Option<Selection>,
     last_click: Option<(Instant, usize)>,
     last_last_click: Option<(Instant, usize)>,
+    clipboard: Option<String>,
     marks: Option<Vec<(usize, usize, Color)>>,
     highlights_cache: RefCell<HightlightCache>,
 }
@@ -53,6 +54,7 @@ impl Editor {
             selection: None,
             last_click: None,
             last_last_click: None,
+            clipboard: None,
             marks: None,
             highlights_cache,
         }
@@ -497,11 +499,32 @@ impl Editor {
         self.cursor
     }
 
+    pub fn set_clipboard(&mut self, text: &str) -> anyhow::Result<()> {
+        let result = arboard::Clipboard::new()
+            .and_then(|mut c| c.set_text(text.to_string()));
+
+        if result.is_err() {
+            self.clipboard = Some(text.to_string());
+        }
+        Ok(())
+    }
+
+    pub fn get_clipboard(& self) -> anyhow::Result<String> {
+        let maybe_text = arboard::Clipboard::new()
+            .and_then(|mut c| c.get_text())
+            .ok()
+            .or_else(|| self.clipboard.clone());
+
+        match maybe_text {
+            Some(text) => Ok(text),
+            None => Err(anyhow::anyhow!("cant get clipboard")),
+        }
+    }
+
     pub fn handle_copy(&mut self) -> anyhow::Result<()> {
         if let Some(selection) = &self.selection {
             let text = self.code.slice(selection.start, selection.end);
-            let mut clipboard = arboard::Clipboard::new()?;
-            clipboard.set_text(text)?;
+            self.set_clipboard(&text)?;
         }
         Ok(())
     }
@@ -509,8 +532,7 @@ impl Editor {
     pub fn handle_cut(&mut self) -> anyhow::Result<()> {
         if let Some(selection) = self.selection.take() {
             let text = self.code.slice(selection.start, selection.end);
-            let mut clipboard = arboard::Clipboard::new()?;
-            clipboard.set_text(text)?;
+            self.set_clipboard(&text)?;
             self.delete_text(selection.start, selection.end);
             self.cursor = selection.start;
             self.selection = None;
@@ -519,16 +541,18 @@ impl Editor {
     }
 
     pub fn handle_paste(&mut self) -> anyhow::Result<()> {
-        let mut clipboard = arboard::Clipboard::new()?;
-        let text = clipboard.get_text()?;
+        let text = self.get_clipboard()?;
+        self.paste(&text)?;
+        Ok(())
+    }
 
+    pub fn paste(&mut self, text: &str) -> anyhow::Result<()> {
         self.code.begin_batch();
         self.remove_selection();
         self.code.insert(self.cursor, &text);
         self.code.commit_batch();
         self.cursor += text.chars().count();
         self.reset_highlight_cache();
-
         Ok(())
     }
 

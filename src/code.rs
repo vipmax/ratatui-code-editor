@@ -100,7 +100,7 @@ impl Code {
         for name in query.capture_names() {
             if let Some(lang) = name.strip_prefix("injection.content.") {
                 if injection_parsers.contains_key(lang) {
-                    continue; // уже добавлено
+                    continue;
                 }
                 if let Some(language) = Self::get_language(lang) {
                     let mut parser = Parser::new();
@@ -111,7 +111,7 @@ impl Code {
                     injection_parsers.insert(lang.to_string(), Rc::new(RefCell::new(parser)));
                     injection_queries.insert(lang.to_string(), inj_query);
                 } else {
-                    eprintln!("⚠️ Unknown injection language: {}", lang);
+                    eprintln!("Unknown injection language: {}", lang);
                 }
             }
         }
@@ -256,7 +256,6 @@ impl Code {
                 new_end_position: Point { row: 0, column: 0 },
             });
         }
-       
     }
 
     fn edit_tree(&mut self, edit: InputEdit) {
