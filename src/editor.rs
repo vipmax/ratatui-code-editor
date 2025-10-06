@@ -625,6 +625,14 @@ impl Editor {
         self.marks.as_ref()
     }
 
+    pub fn get_selection(&mut self) -> anyhow::Result<String> {
+        if let Some(selection) = &self.selection && !selection.is_empty() {
+            let text = self.code.slice(selection.start, selection.end);
+            return Ok(text);
+        }
+        Err(anyhow::anyhow!("no selection"))
+    }
+
     fn cached_highlight_interval(
         &self, start: usize, end: usize, theme: &Theme
     ) -> Vec<(usize, usize, Style)> {
