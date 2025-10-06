@@ -642,6 +642,22 @@ impl Editor {
         self.selection = Some(selection);
     }
 
+    pub fn set_offset_y(&mut self, offset_y: usize) {
+        self.offset_y = offset_y;
+    }
+
+    pub fn set_offset_x(&mut self, offset_x: usize) {
+        self.offset_x = offset_x;
+    }
+    
+    pub fn get_offset_y(&self) -> usize {
+        self.offset_y
+    }
+
+    pub fn get_offset_x(&self) -> usize {
+        self.offset_x
+    }
+
     fn cached_highlight_interval(
         &self, start: usize, end: usize, theme: &Theme
     ) -> Vec<(usize, usize, Style)> {
