@@ -21,6 +21,13 @@ type Hightlight = (usize, usize, Style);
 // start offset, end offset
 type HightlightCache = HashMap<(usize, usize), Vec<Hightlight>>;
 
+#[derive(Debug, Clone, Copy)]
+enum SelectionSnap {
+    None,
+    Word { anchor: usize },
+    Line { anchor: usize },
+}
+
 pub struct Editor {
     code: Code,
     cursor: usize,
@@ -30,6 +37,7 @@ pub struct Editor {
     selection: Option<Selection>,
     last_click: Option<(Instant, usize)>,
     last_last_click: Option<(Instant, usize)>,
+    selection_snap: SelectionSnap,
     clipboard: Option<String>,
     marks: Option<Vec<(usize, usize, Color)>>,
     highlights_cache: RefCell<HightlightCache>,
@@ -54,6 +62,7 @@ impl Editor {
             selection: None,
             last_click: None,
             last_last_click: None,
+            selection_snap: SelectionSnap::None,
             clipboard: None,
             marks: None,
             highlights_cache,
@@ -156,16 +165,7 @@ impl Editor {
                             .unwrap_or(false),
                     );
 
-                    let (start, end) = if tpl {
-                        self.code.line_boundaries(cursor)
-                    } else if dbl {
-                        self.code.word_boundaries(cursor)
-                    } else {
-                        (cursor, cursor)
-                    };
-
-                    self.selection = Some(Selection::from_anchor_and_cursor(start, end));
-                    self.cursor = end;
+                    self.start_click_selection(cursor, dbl, tpl);
 
                     self.last_last_click = self.last_click;
                     self.last_click = Some(click);
@@ -176,16 +176,82 @@ impl Editor {
                 let pos = self.cursor_from_mouse(mouse.column, mouse.row, area);
 
                 if let Some(cursor) = pos {
-                    let anchor = self.selection_anchor();
-                    self.selection = Some(Selection::from_anchor_and_cursor(anchor, cursor));
-                    self.cursor = cursor;
+                    match self.selection_snap {
+                        SelectionSnap::Line { anchor } => {
+                            self.handle_line_drag(cursor, anchor);
+                        }
+                        SelectionSnap::Word { anchor } => {
+                            self.handle_word_drag(cursor, anchor);
+                        }
+                        SelectionSnap::None => {
+                            let anchor = self.selection_anchor();
+                            self.selection = Some(Selection::from_anchor_and_cursor(anchor, cursor));
+                            self.cursor = cursor;
+                        }
+                    }
                 }
+            }
+
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.selection_snap = SelectionSnap::None;
             }
 
             _ => {}
         }
 
         Ok(())
+    }
+
+    fn start_click_selection(&mut self, cursor: usize, is_double: bool, is_triple: bool) {
+        let (start, end, snap) = if is_triple {
+            let (s, e) = self.code.line_boundaries(cursor);
+            (s, e, SelectionSnap::Line { anchor: cursor })
+        } else if is_double {
+            let (s, e) = self.code.word_boundaries(cursor);
+            (s, e, SelectionSnap::Word { anchor: cursor })
+        } else {
+            (cursor, cursor, SelectionSnap::None)
+        };
+
+        self.selection = Some(Selection::from_anchor_and_cursor(start, end));
+        self.cursor = end;
+        self.selection_snap = snap;
+    }
+
+    fn handle_word_drag(&mut self, cursor: usize, anchor_pos: usize) {
+        let (anchor_start, anchor_end) = self.code.word_boundaries(anchor_pos);
+        let (cur_start, cur_end) = self.code.word_boundaries(cursor);
+
+        if cursor > anchor_pos {
+            let snapped = cur_end;
+            self.selection = Some(Selection::from_anchor_and_cursor(anchor_start, snapped));
+            self.cursor = snapped;
+        } else if cursor < anchor_pos {
+            let snapped = cur_start;
+            self.selection = Some(Selection::from_anchor_and_cursor(snapped, anchor_end));
+            self.cursor = snapped;
+        } else {
+            self.selection = Some(Selection::new(anchor_start, anchor_end));
+            self.cursor = anchor_end;
+        }
+    }
+
+    fn handle_line_drag(&mut self, cursor: usize, anchor_pos: usize) {
+        let (anchor_start, anchor_end) = self.code.line_boundaries(anchor_pos);
+        let (cur_start, cur_end) = self.code.line_boundaries(cursor);
+
+        if cursor > anchor_pos {
+            let snapped = cur_end;
+            self.selection = Some(Selection::from_anchor_and_cursor(anchor_start, snapped));
+            self.cursor = snapped;
+        } else if cursor < anchor_pos {
+            let snapped = cur_start;
+            self.selection = Some(Selection::from_anchor_and_cursor(snapped, anchor_end));
+            self.cursor = snapped;
+        } else {
+            self.selection = Some(Selection::new(anchor_start, anchor_end));
+            self.cursor = anchor_end;
+        }
     }
 
     fn cursor_from_mouse(
@@ -637,7 +703,6 @@ impl Editor {
        return self.selection;
     }
 
-    //set selection
     pub fn set_selection(&mut self, selection: Selection) {
         self.selection = Some(selection);
     }
