@@ -1,4 +1,11 @@
 #[derive(Debug, Clone, Copy)]
+pub enum SelectionSnap {
+    None,
+    Word { anchor: usize },
+    Line { anchor: usize },
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Selection {
     pub start: usize, 
     pub end: usize,  

@@ -6,13 +6,15 @@ use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::{prelude::*, widgets::Widget};
 use unicode_width::UnicodeWidthChar;
-use std::time::{Instant, Duration};
+use std::time::Duration;
+use crate::click::{ClickKind, ClickTracker};
 use crate::code::Code;
 use crate::history::{EditBatch, EditKind};
-use crate::selection::Selection;
+use crate::selection::{Selection, SelectionSnap};
 use crate::utils;
 use std::collections::HashMap;
 use std::cell::RefCell;
+use anyhow::{Result, anyhow};
 
 // keyword and ratatui style
 type Theme = HashMap<String, Style>;
@@ -21,22 +23,14 @@ type Hightlight = (usize, usize, Style);
 // start offset, end offset
 type HightlightCache = HashMap<(usize, usize), Vec<Hightlight>>;
 
-#[derive(Debug, Clone, Copy)]
-enum SelectionSnap {
-    None,
-    Word { anchor: usize },
-    Line { anchor: usize },
-}
-
 pub struct Editor {
     code: Code,
     cursor: usize,
     offset_y: usize,
     offset_x: usize,
-    theme: HashMap<String, Style>,
+    theme: Theme,
     selection: Option<Selection>,
-    last_click: Option<(Instant, usize)>,
-    last_last_click: Option<(Instant, usize)>,
+    clicks: ClickTracker,
     selection_snap: SelectionSnap,
     clipboard: Option<String>,
     marks: Option<Vec<(usize, usize, Color)>>,
@@ -60,8 +54,7 @@ impl Editor {
             offset_x: 0,
             theme,
             selection: None,
-            last_click: None,
-            last_last_click: None,
+            clicks: ClickTracker::new(Duration::from_millis(700)),
             selection_snap: SelectionSnap::None,
             clipboard: None,
             marks: None,
@@ -73,7 +66,7 @@ impl Editor {
         &mut self,
         key: KeyEvent,
         area: &Rect,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         use crossterm::event::KeyCode;
 
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
@@ -137,7 +130,7 @@ impl Editor {
 
     pub fn mouse(
         &mut self, mouse: MouseEvent, area: &Rect,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
 
         match mouse.kind {
             MouseEventKind::ScrollUp => self.scroll_up(),
@@ -147,48 +140,14 @@ impl Editor {
                 let pos = self.cursor_from_mouse(mouse.column, mouse.row, area);
 
                 if let Some(cursor) = pos {
-                    let now = Instant::now();
-                    let max_dt = Duration::from_millis(700);
-
-                    let click = (now, cursor);
-                    let (dbl, tpl) = (
-                        self.last_click
-                            .map(|(t, p)|{
-                                p == cursor && now.duration_since(t) < max_dt
-                            }).unwrap_or(false),
-                        self.last_click.zip(self.last_last_click)
-                            .map(|((t1, p1), (t0, p0))| {
-                                p0 == cursor && p1 == cursor &&
-                                now.duration_since(t0) < max_dt &&
-                                t1.duration_since(t0) < max_dt
-                            })
-                            .unwrap_or(false),
-                    );
-
-                    self.start_click_selection(cursor, dbl, tpl);
-
-                    self.last_last_click = self.last_click;
-                    self.last_click = Some(click);
+                    self.handle_mouse_down(cursor);
                 }
             }
 
             MouseEventKind::Drag(MouseButton::Left) => {
                 let pos = self.cursor_from_mouse(mouse.column, mouse.row, area);
-
                 if let Some(cursor) = pos {
-                    match self.selection_snap {
-                        SelectionSnap::Line { anchor } => {
-                            self.handle_line_drag(cursor, anchor);
-                        }
-                        SelectionSnap::Word { anchor } => {
-                            self.handle_word_drag(cursor, anchor);
-                        }
-                        SelectionSnap::None => {
-                            let anchor = self.selection_anchor();
-                            self.selection = Some(Selection::from_anchor_and_cursor(anchor, cursor));
-                            self.cursor = cursor;
-                        }
-                    }
+                    self.handle_mouse_drag(cursor);
                 }
             }
 
@@ -202,20 +161,39 @@ impl Editor {
         Ok(())
     }
 
-    fn start_click_selection(&mut self, cursor: usize, is_double: bool, is_triple: bool) {
-        let (start, end, snap) = if is_triple {
-            let (s, e) = self.code.line_boundaries(cursor);
-            (s, e, SelectionSnap::Line { anchor: cursor })
-        } else if is_double {
-            let (s, e) = self.code.word_boundaries(cursor);
-            (s, e, SelectionSnap::Word { anchor: cursor })
-        } else {
-            (cursor, cursor, SelectionSnap::None)
+    fn handle_mouse_down(&mut self, cursor: usize) {
+        let kind = self.clicks.register(cursor);
+        let (start, end, snap) = match kind {
+            ClickKind::Triple => {
+                let (s, e) = self.code.line_boundaries(cursor);
+                (s, e, SelectionSnap::Line { anchor: cursor })
+            }
+            ClickKind::Double => {
+                let (s, e) = self.code.word_boundaries(cursor);
+                (s, e, SelectionSnap::Word { anchor: cursor })
+            }
+            ClickKind::Single => (cursor, cursor, SelectionSnap::None),
         };
 
         self.selection = Some(Selection::from_anchor_and_cursor(start, end));
         self.cursor = end;
         self.selection_snap = snap;
+    }
+
+    fn handle_mouse_drag(&mut self, cursor: usize) {
+        match self.selection_snap {
+            SelectionSnap::Line { anchor } => {
+                self.handle_line_drag(cursor, anchor);
+            }
+            SelectionSnap::Word { anchor } => {
+                self.handle_word_drag(cursor, anchor);
+            }
+            SelectionSnap::None => {
+                let anchor = self.selection_anchor();
+                self.selection = Some(Selection::from_anchor_and_cursor(anchor, cursor));
+                self.cursor = cursor;
+            }
+        }
     }
 
     fn handle_word_drag(&mut self, cursor: usize, anchor_pos: usize) {
@@ -544,7 +522,7 @@ impl Editor {
         }
     }
 
-    fn build_theme(theme: &Vec<(&str, &str)>) -> HashMap<String, Style> {
+    fn build_theme(theme: &Vec<(&str, &str)>) -> Theme {
         theme.into_iter()
             .map(|(name, hex)| {
                 let (r, g, b) = utils::rgb(hex);
@@ -565,29 +543,22 @@ impl Editor {
         self.cursor
     }
 
-    pub fn set_clipboard(&mut self, text: &str) -> anyhow::Result<()> {
-        let result = arboard::Clipboard::new()
-            .and_then(|mut c| c.set_text(text.to_string()));
-
-        if result.is_err() {
-            self.clipboard = Some(text.to_string());
-        }
+    pub fn set_clipboard(&mut self, text: &str) -> Result<()> {
+        arboard::Clipboard::new()
+            .and_then(|mut c| c.set_text(text.to_string()))
+            .unwrap_or_else(|_| self.clipboard = Some(text.to_string()));
         Ok(())
     }
 
-    pub fn get_clipboard(& self) -> anyhow::Result<String> {
-        let maybe_text = arboard::Clipboard::new()
+    pub fn get_clipboard(&self) -> Result<String> {
+        arboard::Clipboard::new()
             .and_then(|mut c| c.get_text())
             .ok()
-            .or_else(|| self.clipboard.clone());
-
-        match maybe_text {
-            Some(text) => Ok(text),
-            None => Err(anyhow::anyhow!("cant get clipboard")),
-        }
+            .or_else(|| self.clipboard.clone())
+            .ok_or_else(|| anyhow!("cant get clipboard"))
     }
 
-    pub fn handle_copy(&mut self) -> anyhow::Result<()> {
+    pub fn handle_copy(&mut self) -> Result<()> {
         if let Some(selection) = &self.selection {
             let text = self.code.slice(selection.start, selection.end);
             self.set_clipboard(&text)?;
@@ -595,7 +566,7 @@ impl Editor {
         Ok(())
     }
 
-    pub fn handle_cut(&mut self) -> anyhow::Result<()> {
+    pub fn handle_cut(&mut self) -> Result<()> {
         if let Some(selection) = self.selection.take() {
             let text = self.code.slice(selection.start, selection.end);
             self.set_clipboard(&text)?;
@@ -606,13 +577,13 @@ impl Editor {
         Ok(())
     }
 
-    pub fn handle_paste(&mut self) -> anyhow::Result<()> {
+    pub fn handle_paste(&mut self) -> Result<()> {
         let text = self.get_clipboard()?;
         self.paste(&text)?;
         Ok(())
     }
 
-    pub fn paste(&mut self, text: &str) -> anyhow::Result<()> {
+    pub fn paste(&mut self, text: &str) -> Result<()> {
         self.code.begin_batch();
         self.remove_selection();
         self.code.insert(self.cursor, &text);
@@ -634,7 +605,7 @@ impl Editor {
         self.selection = None;
     }
 
-    pub fn handle_duplicate(&mut self) -> anyhow::Result<()> {
+    pub fn handle_duplicate(&mut self) -> Result<()> {
         if let Some(selection) = &self.selection {
             let text = self.code.slice(selection.start, selection.end);
             let insert_pos = selection.end;

@@ -168,19 +168,19 @@ impl Code {
         }
     }
     
-    pub fn line(&self, line_idx: usize) -> RopeSlice{
+    pub fn line(&self, line_idx: usize) -> RopeSlice<'_> {
         self.content.line(line_idx)
     }
-    
+
     pub fn char_to_line(&self, char_idx: usize) -> usize {
         self.content.char_to_line(char_idx)
     }
     
-    pub fn char_slice(&self, start: usize, end: usize) -> RopeSlice {
+    pub fn char_slice(&self, start: usize, end: usize) -> RopeSlice<'_> {
         self.content.slice(start..end)
     }
     
-    pub fn byte_slice(&self, start: usize, end: usize) -> RopeSlice {
+    pub fn byte_slice(&self, start: usize, end: usize) -> RopeSlice<'_> {
         self.content.byte_slice(start..end)
     }
     
