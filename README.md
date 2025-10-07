@@ -11,7 +11,7 @@ A code editor widget for [Ratatui](https://github.com/ratatui/ratatui), built wi
 
 - 🎨 **Syntax Highlighting** - Powered by Tree-sitter with support for multiple languages
 - 📝 **Text Editing** - Full text editing capabilities with cursor movement
-- 🖱️ **Mouse Support** - Click to position cursor, drag to select text
+- 🖱️ **Mouse Support** - Click to position cursor, drag to select text, words and lines snapping supported 
 - 📋 **Copy/Paste** - Clipboard integration with system clipboard
 - 🔄 **Undo/Redo** - Full history management for edit operations
 - 🎯 **Text Selection** - Visual text selection with keyboard and mouse
