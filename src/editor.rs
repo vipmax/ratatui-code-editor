@@ -295,6 +295,12 @@ impl Editor {
     }
 
     fn handle_left(&mut self, shift: bool) {
+        if let Some(selection) = &self.selection && !selection.is_empty() {
+            self.cursor = selection.start;
+            self.selection = None;
+            return;
+        } 
+
         if self.cursor > 0 {
             let new_cursor = self.cursor - 1;
             self.update_selection(new_cursor, shift);
@@ -303,6 +309,11 @@ impl Editor {
     }
 
     fn handle_right(&mut self, shift: bool) {
+        if let Some(selection) = &self.selection && !selection.is_empty() {
+            self.selection = None;
+            return;
+        } 
+
         if self.cursor < self.code.len() {
             let new_cursor = self.cursor + 1;
             self.update_selection(new_cursor, shift);
