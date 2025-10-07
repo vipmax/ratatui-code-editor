@@ -145,6 +145,14 @@ impl Editor {
             }
 
             MouseEventKind::Drag(MouseButton::Left) => {
+                // Auto-scroll when dragging on the last or first visible row
+                if mouse.row == area.top() {
+                    self.scroll_up();
+                }
+                if mouse.row == area.bottom().saturating_sub(1) {
+                    self.scroll_down(area.height as usize);
+                }
+
                 let pos = self.cursor_from_mouse(mouse.column, mouse.row, area);
                 if let Some(cursor) = pos {
                     self.handle_mouse_drag(cursor);
