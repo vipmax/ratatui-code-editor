@@ -296,7 +296,8 @@ impl Editor {
 
     fn handle_left(&mut self, shift: bool) {
         if !shift && let Some(selection) = &self.selection && !selection.is_empty() {
-            self.cursor = selection.start;
+            let (start, _) = selection.sorted();
+            self.cursor = start;
             self.selection = None;
             return;
         } 
@@ -310,6 +311,8 @@ impl Editor {
 
     fn handle_right(&mut self, shift: bool) {
         if !shift && let Some(selection) = &self.selection && !selection.is_empty() {
+            let (_, end) = selection.sorted();
+            self.cursor = end;
             self.selection = None;
             return;
         } 
