@@ -522,6 +522,79 @@ impl Code {
         true
     }
 
+    /// Paste text with **indentation awareness**.
+    /// 
+    /// 1. Determine the indentation level at the cursor (`base_level`).
+    /// 2. The first line of the pasted block is inserted at the cursor level (trimmed).
+    /// 3. Subsequent lines adjust their indentation **relative to the previous non-empty line in the pasted block**:
+    ///    - Compute `diff` = change in indentation from the previous non-empty line in the source block (clamped ±1).
+    ///    - Apply `diff` to `prev_nonempty_level` to calculate the new insertion level.
+    /// 4. Empty lines are inserted as-is and do not affect subsequent indentation.
+    /// 
+    /// This ensures that pasted blocks keep their relative structure while aligning to the cursor.
+
+
+    /// Inserts `text` with indentation-awareness at `offset`.
+    /// Returns number of characters inserted.
+    pub fn smart_paste(&mut self, offset: usize, text: &str) -> usize {
+        let (row, col) = self.point(offset);
+        let base_level = self.indentation_level(row, col);
+        let indent_unit = self.indent();
+
+        if indent_unit.is_empty() {
+            self.insert(offset, text);
+            return text.chars().count();
+        }
+
+        let lines: Vec<&str> = text.lines().collect();
+        if lines.is_empty() {
+            return 0;
+        }
+
+        // Compute indentation levels of all lines in the source block
+        let mut line_levels = Vec::with_capacity(lines.len());
+        for line in &lines {
+            let mut lvl = 0;
+            let mut rest = *line;
+            while rest.starts_with(&indent_unit) {
+                lvl += 1;
+                rest = &rest[indent_unit.len()..];
+            }
+            line_levels.push(lvl);
+        }
+
+        let mut result = Vec::with_capacity(lines.len());
+
+        let first_line_trimmed = lines[0].trim_start();
+        result.push(first_line_trimmed.to_string());
+
+        let mut prev_nonempty_level = base_level;
+        let mut prev_line_level_in_block = line_levels[0];
+
+        for i in 1..lines.len() {
+            let line = lines[i];
+
+            if line.trim().is_empty() {
+                result.push(line.to_string());
+                continue;
+            }
+
+            // diff relative to previous non-empty line in the source block
+            let diff = (line_levels[i] as isize - prev_line_level_in_block as isize).clamp(-1, 1);
+            let new_level = (prev_nonempty_level as isize + diff).max(0) as usize;
+            let indents = indent_unit.repeat(new_level);
+            let result_line = format!("{}{}", indents, line.trim_start());
+            result.push(result_line);
+
+            // update levels only for non-empty line
+            prev_nonempty_level = new_level;
+            prev_line_level_in_block = line_levels[i];
+        }
+
+        let to_insert = result.join("\n");
+        self.insert(offset, &to_insert);
+        to_insert.chars().count()
+    }
 }
 
 /// An iterator over byte slices of Rope chunks.
@@ -565,6 +638,7 @@ impl<'a> tree_sitter::TextProvider<&'a [u8]> for RopeProvider<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    
 
     #[test]
     fn test_insert() {
@@ -657,5 +731,31 @@ mod tests {
         code.insert(0, "    Hello, World");
         assert_eq!(code.is_only_indentation_before(0, 4), false);
         assert_eq!(code.is_only_indentation_before(0, 10), false);
+    }
+
+    #[test]
+    fn test_smart_paste_1() {
+        let initial = "fn foo() {\n    let x = 1;\n    \n}";
+        let mut code = Code::new(initial, "rust").unwrap();
+
+        let offset = 30;
+        let paste = "if start == end && start == self.code.len() {\n    return;\n}";
+        code.smart_paste(offset, paste);
+
+        let expected = "fn foo() {\n    let x = 1;\n    if start == end && start == self.code.len() {\n        return;\n    }\n}";
+        assert_eq!(code.get_content(), expected);
+    }
+
+    #[test]
+    fn test_smart_paste_2() {
+        let initial = "fn foo() {\n    let x = 1;\n    \n}";
+        let mut code = Code::new(initial, "rust").unwrap();
+
+        let offset = 30;
+        let paste = "    if start == end && start == self.code.len() {\n        return;\n    }";
+        code.smart_paste(offset, paste);
+
+        let expected = "fn foo() {\n    let x = 1;\n    if start == end && start == self.code.len() {\n        return;\n    }\n}";
+        assert_eq!(code.get_content(), expected);
     }
 }

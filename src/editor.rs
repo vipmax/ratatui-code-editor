@@ -608,9 +608,10 @@ impl Editor {
     pub fn paste(&mut self, text: &str) -> Result<()> {
         self.code.begin_batch();
         self.remove_selection();
-        self.code.insert(self.cursor, &text);
+
+        let inserted = self.code.smart_paste(self.cursor, text);
         self.code.commit_batch();
-        self.cursor += text.chars().count();
+        self.cursor += inserted;
         self.reset_highlight_cache();
         Ok(())
     }
