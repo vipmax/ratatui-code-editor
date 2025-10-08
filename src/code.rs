@@ -6,7 +6,7 @@ use tree_sitter::{Language, Parser, Query, Tree, Node};
 use crate::history::{History, EditBatch, Edit, EditKind};
 use rust_embed::RustEmbed;
 use std::collections::HashMap;
-use crate::utils::indent;
+use crate::utils::{indent, count_indent_units};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -24,7 +24,6 @@ pub struct Code {
     applying_history: bool,
     history: History,
     current_batch: EditBatch,
-
     injection_parsers: Option<HashMap<String, Rc<RefCell<Parser>>>>,
     injection_queries: Option<HashMap<String, Query>>,
 }
@@ -474,52 +473,37 @@ impl Code {
     }
 
     pub fn indentation_level(&self, line: usize, col: usize) -> usize {
-        if self.lang == "unknown" || self.lang == "" { return 0 }
-        let indent_str = self.indent();
-        let line_slice = self.line(line);
-        let line_str = line_slice.to_string();
-        let mut count = 0;
-        let mut chars = line_str.chars().peekable();
-        let mut total_chars = 0;
-
-        while chars.peek().is_some() {
-            let mut matched = true;
-            let mut indent_chars = 0;
-            for ch in indent_str.chars() {
-                if Some(&ch) != chars.peek() {
-                    matched = false;
-                    break;
-                }
-                chars.next();
-                indent_chars += 1;
-            }
-            total_chars += indent_chars;
-            if total_chars > col {
-                break;
-            }
-            if matched {
-                count += 1;
-            } else {
-                break;
-            }
-        }
-        count
+        if self.lang == "unknown" || self.lang.is_empty() { return 0; }
+        let line_str = self.line(line);
+        count_indent_units(line_str, &self.indent(), Some(col))
     }
 
     pub fn is_only_indentation_before(&self, r: usize, c: usize) -> bool {
-        if self.lang == "unknown" || self.lang == "" { return false }
+        if self.lang == "unknown" || self.lang.is_empty() { return false; }
         if r >= self.len_lines() || c == 0 { return false; }
-
+    
         let line = self.line(r);
-
-        let mut col = 0;
-        for ch in line.chars() {
-            if col >= c { break; } // Reached the specified column
-            // Found a non-whitespace character before the specified position
-            if !ch.is_whitespace() { return false; }
-            col += 1;
+        let indent_unit = self.indent();
+    
+        if indent_unit.is_empty() {
+            return line.chars().take(c).all(|ch| ch.is_whitespace());
         }
-        true
+    
+        let count_units = count_indent_units(line, &indent_unit, Some(c));
+        let only_indent = count_units * indent_unit.chars().count() >= c;
+        only_indent
+    }
+
+    pub fn find_indent_at_line_start(&self, line_idx: usize) -> Option<usize> {
+        if line_idx >= self.len_lines() { return None; }
+    
+        let line = self.line(line_idx);
+        let indent_unit = self.indent();
+        if indent_unit.is_empty() { return None; }
+    
+        let count_units = count_indent_units(line, &indent_unit, None);
+        let col = count_units * indent_unit.chars().count();
+        if col > 0 { Some(col) } else { None }
     }
 
     /// Paste text with **indentation awareness**.

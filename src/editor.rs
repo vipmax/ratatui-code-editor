@@ -92,6 +92,7 @@ impl Editor {
             KeyCode::Enter     => self.handle_enter(false),
             KeyCode::Char(c)   => self.handle_char(c),
             KeyCode::Tab       => self.handle_tab(),
+            KeyCode::BackTab   => self.handle_untab(),
             _ => {}
         }
 
@@ -447,12 +448,94 @@ impl Editor {
         }
     }
 
-    pub fn handle_tab(&mut self, ) {
-        let text = self.code.indent();
+    pub fn handle_tab(&mut self) {
+        let indent_text = self.code.indent();
         self.code.begin_batch();
-        self.code.insert(self.cursor, &text);
+        
+        let lines_to_handle = if let Some(selection) = &self.selection && !selection.is_empty() {
+            let (start, end) = selection.sorted();
+            let (start_row, _) = self.code.point(start);
+            let (end_row, _) = self.code.point(end);
+            (start_row..=end_row).collect::<Vec<_>>()
+        } else {
+            let (row, _) = self.code.point(self.cursor);
+            vec![row]
+        };
+
+        let mut indents_added = 0;
+        for line_idx in lines_to_handle.into_iter().rev() {
+            let line_start = self.code.line_to_char(line_idx);
+            self.code.insert(line_start, &indent_text);
+            indents_added += 1;
+        }
+        
         self.code.commit_batch();
-        self.cursor += text.chars().count();
+        
+        if let Some(selection) = &self.selection && !selection.is_empty() {
+            let (smin, _) = selection.sorted();
+            let mut anchor = self.selection_anchor();
+            let is_selection_forward = anchor == smin;
+            if is_selection_forward {
+                self.cursor += indent_text.len() * indents_added;
+                anchor += indent_text.len();
+            } else {
+                self.cursor += indent_text.len();
+                anchor +=indent_text.len() * indents_added;
+            }
+            self.selection = Some(Selection::from_anchor_and_cursor(anchor, self.cursor));
+        } else {
+            self.cursor += indent_text.len();
+        }
+
+        self.reset_highlight_cache();
+    }
+
+    pub fn handle_untab(&mut self) {
+        let indent_text = self.code.indent();
+        let indent_len = indent_text.chars().count();
+        self.code.begin_batch();
+    
+        let lines_to_handle = if let Some(selection) = &self.selection && !selection.is_empty() {
+            let (start, end) = selection.sorted();
+            let (start_row, _) = self.code.point(start);
+            let (end_row, _) = self.code.point(end);
+            (start_row..=end_row).collect::<Vec<_>>()
+        } else {
+            let (row, _) = self.code.point(self.cursor);
+            vec![row]
+        };
+    
+        let mut lines_untabbed = 0;
+        for line_idx in lines_to_handle.into_iter().rev() {
+            if let Some(indent_cols) = self.code.find_indent_at_line_start(line_idx) {
+                let remove_count = indent_cols.min(indent_len);
+                if remove_count > 0 {
+                    let line_start = self.code.line_to_char(line_idx);
+                    let indent_end = line_start + remove_count;
+                    self.code.remove(line_start, indent_end);
+                    lines_untabbed += 1;
+                }
+            }
+        }
+    
+        self.code.commit_batch();
+    
+        if let Some(selection) = &self.selection && !selection.is_empty() {
+            let (smin, _) = selection.sorted();
+            let mut anchor = self.selection_anchor();
+            let is_selection_forward = anchor == smin;
+            if is_selection_forward {
+                self.cursor = self.cursor.saturating_sub(indent_len * lines_untabbed);
+                anchor = anchor.saturating_sub(indent_len);
+            } else {
+                self.cursor = self.cursor.saturating_sub(indent_len);
+                anchor = anchor.saturating_sub(indent_len * lines_untabbed);
+            }
+            self.selection = Some(Selection::from_anchor_and_cursor(anchor, self.cursor));
+        } else {
+            self.cursor = self.cursor.saturating_sub(indent_len * lines_untabbed);
+        }
+    
         self.reset_highlight_cache();
     }
 

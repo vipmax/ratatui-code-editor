@@ -41,6 +41,34 @@ pub fn indent(lang: &str) -> String {
     }
 }
 
+pub fn count_indent_units(
+    line: ropey::RopeSlice<'_>, 
+    indent_unit: &str, 
+    max_col: Option<usize>
+) -> usize {
+    if indent_unit.is_empty() { return 0; }
+
+    let mut chars = line.chars();
+    let mut count = 0;
+    let mut col = 0;
+    let indent_chars: Vec<char> = indent_unit.chars().collect();
+
+    'outer: loop {
+        for &ch in &indent_chars {
+            match chars.next() {
+                Some(c) if c == ch => col += 1,
+                _ => break 'outer,
+            }
+        }
+        count += 1;
+        if let Some(max) = max_col {
+            if col >= max { break; }
+        }
+    }
+
+    count
+}
+
 pub fn rgb(hex: &str) -> (u8, u8, u8) {
     let hex = hex.trim_start_matches('#');
     let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
