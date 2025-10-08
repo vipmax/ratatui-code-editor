@@ -9,7 +9,7 @@ use unicode_width::UnicodeWidthChar;
 use std::time::Duration;
 use crate::click::{ClickKind, ClickTracker};
 use crate::code::Code;
-use crate::history::{EditBatch, EditKind};
+use crate::code::{EditKind};
 use crate::selection::{Selection, SelectionSnap};
 use crate::utils;
 use std::collections::HashMap;
@@ -375,10 +375,11 @@ impl Editor {
 
     pub fn handle_char(&mut self, text: char) {
         let text = text.to_string();
-        self.code.begin_batch();
+        self.code.tx();
+        self.code.fallback(self.cursor, self.selection);
         self.remove_selection();
         self.code.insert(self.cursor, &text);
-        self.code.commit_batch();
+        self.code.commit();
         self.cursor += text.chars().count();
         self.reset_highlight_cache();
     }
@@ -389,29 +390,32 @@ impl Editor {
             let line_end = self.code.offset(row, 0) + self.code.line_len(row);
             self.cursor = line_end.saturating_sub(1);
         }
-        self.code.begin_batch();
+        self.code.tx();
+        self.code.fallback(self.cursor, self.selection);
         self.remove_selection();
         let (row, col) = self.code.point(self.cursor);
         let indent_level = self.code.indentation_level(row, col);
         let indent_text = self.code.indent().repeat(indent_level);
         let text = format!("\n{}", indent_text);
         self.code.insert(self.cursor, &text);
-        self.code.commit_batch();
+        self.code.commit();
         self.cursor += text.chars().count();
         self.reset_highlight_cache();
     }
 
     pub fn insert_text(&mut self, pos: usize, text: &str) {
-        self.code.begin_batch();
+        self.code.tx();
+        self.code.fallback(self.cursor, self.selection);
         self.code.insert(pos, text);
-        self.code.commit_batch();
+        self.code.commit();
         self.reset_highlight_cache();
     }
 
     pub fn delete_text(&mut self, from: usize, to: usize) {
-        self.code.begin_batch();
+        self.code.tx();
+        self.code.fallback(self.cursor, self.selection);
         self.code.remove(from, to);
-        self.code.commit_batch();
+        self.code.commit();
         self.reset_highlight_cache();
     }
 
@@ -449,9 +453,10 @@ impl Editor {
     }
 
     pub fn handle_tab(&mut self) {
-        let indent_text = self.code.indent();
-        self.code.begin_batch();
+        self.code.tx();
+        self.code.fallback(self.cursor, self.selection);
         
+        let indent_text = self.code.indent();
         let lines_to_handle = if let Some(selection) = &self.selection && !selection.is_empty() {
             let (start, end) = selection.sorted();
             let (start_row, _) = self.code.point(start);
@@ -469,7 +474,7 @@ impl Editor {
             indents_added += 1;
         }
         
-        self.code.commit_batch();
+        self.code.commit();
         
         if let Some(selection) = &self.selection && !selection.is_empty() {
             let (smin, _) = selection.sorted();
@@ -491,10 +496,12 @@ impl Editor {
     }
 
     pub fn handle_untab(&mut self) {
+        self.code.tx();
+        self.code.fallback(self.cursor, self.selection);
+        
         let indent_text = self.code.indent();
         let indent_len = indent_text.chars().count();
-        self.code.begin_batch();
-    
+
         let lines_to_handle = if let Some(selection) = &self.selection && !selection.is_empty() {
             let (start, end) = selection.sorted();
             let (start_row, _) = self.code.point(start);
@@ -518,7 +525,7 @@ impl Editor {
             }
         }
     
-        self.code.commit_batch();
+        self.code.commit();
     
         if let Some(selection) = &self.selection && !selection.is_empty() {
             let (smin, _) = selection.sorted();
@@ -542,8 +549,8 @@ impl Editor {
     pub fn handle_undo(&mut self) {
         let edits = self.code.undo();
         self.reset_highlight_cache();
-        if let Some(edits) = edits {
-            for edit in edits.iter().rev()  {
+        if let Some(batch) = edits {
+            for edit in batch.edits.iter().rev()  {
                 match &edit.kind {
                     EditKind::Insert { offset, text: _ } => {
                         self.cursor = *offset;
@@ -553,14 +560,20 @@ impl Editor {
                     }
                 }
             }
+
+            if let Some(fb) = batch.fallback { 
+                self.cursor = fb.offset; 
+                self.selection = fb.selection;
+                return; 
+            }
         }
     }
 
     pub fn handle_redo(&mut self) {
         let edits = self.code.redo();
         self.reset_highlight_cache();
-        if let Some(edits) = edits {
-            for edit in edits {
+        if let Some(batch) = edits {
+            for edit in batch.edits {
                 match &edit.kind {
                     EditKind::Insert { offset, text } => {
                         self.cursor = *offset + text.chars().count();
@@ -570,14 +583,20 @@ impl Editor {
                     }
                 }
             }
+            if let Some(fb) = batch.fallback { 
+                self.cursor = fb.offset; 
+                self.selection = fb.selection; 
+                return; 
+            }
         }
     }
 
     pub fn set_content(&mut self, content: &str) {
-        self.code.begin_batch();
+        self.code.tx();
+        self.code.fallback(self.cursor, self.selection);
         self.code.remove(0, self.code.len());
         self.code.insert(0, content);
-        self.code.commit_batch();
+        self.code.commit();
         self.reset_highlight_cache();
     }
 
@@ -598,21 +617,6 @@ impl Editor {
         }
     }
 
-    pub fn apply_edits(&mut self, edits: &EditBatch) {
-        self.code.begin_batch();
-        for edit in edits {
-            match &edit.kind {
-                EditKind::Insert { offset, text } => {
-                    self.code.insert(*offset, text);
-                }
-                EditKind::Remove { offset, text } => {
-                    self.code.remove(*offset, *offset + text.chars().count());
-                }
-            }
-        }
-        self.code.commit_batch();
-        self.reset_highlight_cache();
-    }
 
     pub fn scroll_up(&mut self) {
         if self.offset_y > 0 {
@@ -689,11 +693,11 @@ impl Editor {
     }
 
     pub fn paste(&mut self, text: &str) -> Result<()> {
-        self.code.begin_batch();
+        self.code.tx();
+        self.code.fallback(self.cursor, self.selection);
         self.remove_selection();
-
         let inserted = self.code.smart_paste(self.cursor, text);
-        self.code.commit_batch();
+        self.code.commit();
         self.cursor += inserted;
         self.reset_highlight_cache();
         Ok(())

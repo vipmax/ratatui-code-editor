@@ -1,17 +1,5 @@
 use std::collections::VecDeque;
-
-#[derive(Clone)]
-pub enum EditKind {
-    Insert { offset: usize, text: String },
-    Remove { offset: usize, text: String },
-}
-
-#[derive(Clone)]
-pub struct Edit {
-    pub kind: EditKind,
-}
-
-pub type EditBatch = Vec<Edit>;
+use crate::code::{EditBatch};
 
 pub struct History {
     index: usize,

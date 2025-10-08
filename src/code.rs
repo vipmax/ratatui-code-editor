@@ -3,7 +3,8 @@ use ropey::{Rope, RopeSlice};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{InputEdit, Point, QueryCursor};
 use tree_sitter::{Language, Parser, Query, Tree, Node};
-use crate::history::{History, EditBatch, Edit, EditKind};
+use crate::history::{History};
+use crate::selection::Selection;
 use rust_embed::RustEmbed;
 use std::collections::HashMap;
 use crate::utils::{indent, count_indent_units};
@@ -14,6 +15,38 @@ use std::rc::Rc;
 #[folder = ""]
 #[include = "langs/*/*"]
 struct LangAssets;
+
+
+#[derive(Clone)]
+pub enum EditKind {
+    Insert { offset: usize, text: String },
+    Remove { offset: usize, text: String },
+}
+
+#[derive(Clone)]
+pub struct Edit {
+    pub kind: EditKind,
+}
+
+#[derive(Clone)]
+pub struct EditBatch {
+    pub edits: Vec<Edit>,
+    pub fallback: Option<EditFallback>,
+}
+
+impl EditBatch {
+    pub fn new() -> Self {
+        Self { edits: Vec::new(), fallback: None }
+    }
+
+}
+
+#[derive(Clone, Copy)]
+pub struct EditFallback {
+    pub offset: usize,
+    pub selection: Option<Selection>,
+}
+
 
 pub struct Code {
     content: ropey::Rope,
@@ -51,7 +84,7 @@ impl Code {
             tree, parser, query,
             applying_history: true,
             history: History::new(1000),
-            current_batch: Vec::new(),
+            current_batch: EditBatch::new(),
             injection_parsers,
             injection_queries,
         })
@@ -191,14 +224,18 @@ impl Code {
         self.content.byte_to_char(byte_idx)
     }
     
-    pub fn begin_batch(&mut self) {
-        self.current_batch.clear();
+    pub fn tx(&mut self) {
+        self.current_batch = EditBatch::new();
     }
 
-    pub fn commit_batch(&mut self) {
-        if !self.current_batch.is_empty() {
+    pub fn fallback(&mut self, offset: usize, selection: Option<Selection>) {
+        self.current_batch.fallback = Some(EditFallback { offset, selection });
+    }
+
+    pub fn commit(&mut self) {
+        if !self.current_batch.edits.is_empty() {
             self.history.push(self.current_batch.clone());
-            self.current_batch.clear();
+            self.current_batch = EditBatch::new();
         }
     }
     
@@ -209,7 +246,7 @@ impl Code {
         self.content.insert(from, text);
         
         if self.applying_history {
-            self.current_batch.push(Edit {
+            self.current_batch.edits.push(Edit {
                 kind: EditKind::Insert {
                     offset: from,
                     text: text.to_string(),
@@ -237,7 +274,7 @@ impl Code {
         self.content.remove(from..to);
         
         if self.applying_history {
-            self.current_batch.push(Edit {
+            self.current_batch.edits.push(Edit {
                 kind: EditKind::Remove {
                     offset: from,
                     text: removed_text,
@@ -392,7 +429,7 @@ impl Code {
         let batch = self.history.undo()?;
         self.applying_history = false;
     
-        for edit in batch.iter().rev() {
+        for edit in batch.edits.iter().rev() {
             match edit.kind {
                 EditKind::Insert { offset, ref text } => {
                     self.remove(offset, offset + text.chars().count());
@@ -411,7 +448,7 @@ impl Code {
         let batch = self.history.redo()?;
         self.applying_history = false;
     
-        for edit in &batch {
+        for edit in &batch.edits {
             match edit.kind {
                 EditKind::Insert { offset, ref text } => {
                     self.insert(offset, text);
@@ -643,13 +680,13 @@ mod tests {
     fn test_undo() {
         let mut code = Code::new("", "").unwrap();
         
-        code.begin_batch();
+        code.tx();
         code.insert(0, "Hello ");
-        code.commit_batch();
+        code.commit();
         
-        code.begin_batch();
+        code.tx();
         code.insert(6, "World");
-        code.commit_batch();
+        code.commit();
         
         code.undo();
         assert_eq!(code.content.to_string(), "Hello ");
@@ -662,9 +699,9 @@ mod tests {
     fn test_redo() {
         let mut code = Code::new("", "").unwrap();
         
-        code.begin_batch();
+        code.tx();
         code.insert(0, "Hello");
-        code.commit_batch();
+        code.commit();
         
         code.undo();
         assert_eq!(code.content.to_string(), "");
