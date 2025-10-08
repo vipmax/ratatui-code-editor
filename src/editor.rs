@@ -9,7 +9,7 @@ use unicode_width::UnicodeWidthChar;
 use std::time::Duration;
 use crate::click::{ClickKind, ClickTracker};
 use crate::code::Code;
-use crate::code::{EditKind};
+use crate::code::{EditKind, EditBatch};
 use crate::selection::{Selection, SelectionSnap};
 use crate::utils;
 use std::collections::HashMap;
@@ -596,6 +596,27 @@ impl Editor {
         self.code.fallback(self.cursor, self.selection);
         self.code.remove(0, self.code.len());
         self.code.insert(0, content);
+        self.code.commit();
+        self.reset_highlight_cache();
+    }
+
+    pub fn apply_batch(&mut self, batch: &EditBatch) {
+        self.code.tx();
+
+        if let Some(fallback) = &batch.fallback {
+            self.code.fallback(fallback.offset, fallback.selection);
+        }
+        
+        for edit in &batch.edits {
+            match &edit.kind {
+                EditKind::Insert { offset, text } => {
+                    self.code.insert(*offset, text);
+                }
+                EditKind::Remove { offset, text } => {
+                    self.code.remove(*offset, *offset + text.chars().count());
+                }
+            }
+        }
         self.code.commit();
         self.reset_highlight_cache();
     }
