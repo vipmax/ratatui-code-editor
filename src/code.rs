@@ -31,18 +31,23 @@ pub struct Edit {
 #[derive(Clone)]
 pub struct EditBatch {
     pub edits: Vec<Edit>,
-    pub fallback: Option<EditFallback>,
+    pub state_before: Option<EditState>,
+    pub state_after: Option<EditState>,
 }
 
 impl EditBatch {
     pub fn new() -> Self {
-        Self { edits: Vec::new(), fallback: None }
+        Self { 
+            edits: Vec::new(), 
+            state_before: None,
+            state_after: None,
+        }
     }
 
 }
 
 #[derive(Clone, Copy)]
-pub struct EditFallback {
+pub struct EditState {
     pub offset: usize,
     pub selection: Option<Selection>,
 }
@@ -228,8 +233,12 @@ impl Code {
         self.current_batch = EditBatch::new();
     }
 
-    pub fn fallback(&mut self, offset: usize, selection: Option<Selection>) {
-        self.current_batch.fallback = Some(EditFallback { offset, selection });
+    pub fn set_state_before(&mut self, offset: usize, selection: Option<Selection>) {
+        self.current_batch.state_before = Some(EditState { offset, selection });
+    }
+
+    pub fn set_state_after(&mut self, offset: usize, selection: Option<Selection>) {
+        self.current_batch.state_after = Some(EditState { offset, selection });
     }
 
     pub fn commit(&mut self) {

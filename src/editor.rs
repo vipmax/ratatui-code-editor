@@ -376,11 +376,12 @@ impl Editor {
     pub fn handle_char(&mut self, text: char) {
         let text = text.to_string();
         self.code.tx();
-        self.code.fallback(self.cursor, self.selection);
+        self.code.set_state_before(self.cursor, self.selection);
         self.remove_selection();
         self.code.insert(self.cursor, &text);
-        self.code.commit();
         self.cursor += text.chars().count();
+        self.code.set_state_after(self.cursor, self.selection);
+        self.code.commit();
         self.reset_highlight_cache();
     }
 
@@ -391,29 +392,24 @@ impl Editor {
             self.cursor = line_end.saturating_sub(1);
         }
         self.code.tx();
-        self.code.fallback(self.cursor, self.selection);
+        self.code.set_state_before(self.cursor, self.selection);
         self.remove_selection();
         let (row, col) = self.code.point(self.cursor);
         let indent_level = self.code.indentation_level(row, col);
         let indent_text = self.code.indent().repeat(indent_level);
         let text = format!("\n{}", indent_text);
         self.code.insert(self.cursor, &text);
-        self.code.commit();
         self.cursor += text.chars().count();
+        self.code.set_state_after(self.cursor, self.selection);
+        self.code.commit();
         self.reset_highlight_cache();
     }
 
-    pub fn insert_text(&mut self, pos: usize, text: &str) {
-        self.code.tx();
-        self.code.fallback(self.cursor, self.selection);
-        self.code.insert(pos, text);
-        self.code.commit();
-        self.reset_highlight_cache();
-    }
+
 
     pub fn delete_text(&mut self, from: usize, to: usize) {
         self.code.tx();
-        self.code.fallback(self.cursor, self.selection);
+        self.code.set_state_before(self.cursor, self.selection);
         self.code.remove(from, to);
         self.code.commit();
         self.reset_highlight_cache();
@@ -454,7 +450,7 @@ impl Editor {
 
     pub fn handle_tab(&mut self) {
         self.code.tx();
-        self.code.fallback(self.cursor, self.selection);
+        self.code.set_state_before(self.cursor, self.selection);
         
         let indent_text = self.code.indent();
         let lines_to_handle = if let Some(selection) = &self.selection && !selection.is_empty() {
@@ -474,7 +470,6 @@ impl Editor {
             indents_added += 1;
         }
         
-        self.code.commit();
         
         if let Some(selection) = &self.selection && !selection.is_empty() {
             let (smin, _) = selection.sorted();
@@ -492,12 +487,16 @@ impl Editor {
             self.cursor += indent_text.len();
         }
 
+        self.code.set_state_after(self.cursor, self.selection);
+        self.code.commit();
+
+
         self.reset_highlight_cache();
     }
 
     pub fn handle_untab(&mut self) {
         self.code.tx();
-        self.code.fallback(self.cursor, self.selection);
+        self.code.set_state_before(self.cursor, self.selection);
         
         let indent_text = self.code.indent();
         let indent_len = indent_text.chars().count();
@@ -525,7 +524,6 @@ impl Editor {
             }
         }
     
-        self.code.commit();
     
         if let Some(selection) = &self.selection && !selection.is_empty() {
             let (smin, _) = selection.sorted();
@@ -542,14 +540,18 @@ impl Editor {
         } else {
             self.cursor = self.cursor.saturating_sub(indent_len * lines_untabbed);
         }
-    
+
+        self.code.set_state_after(self.cursor, self.selection);
+        self.code.commit();
+
         self.reset_highlight_cache();
     }
 
     pub fn handle_undo(&mut self) {
         let edits = self.code.undo();
         self.reset_highlight_cache();
-        if let Some(batch) = edits {
+        if let Some(batch) = edits {            
+            // Fallback to computing cursor position from edits
             for edit in batch.edits.iter().rev()  {
                 match &edit.kind {
                     EditKind::Insert { offset, text: _ } => {
@@ -560,8 +562,8 @@ impl Editor {
                     }
                 }
             }
-
-            if let Some(fb) = batch.fallback { 
+            // Restore state
+            if let Some(fb) = batch.state_before { 
                 self.cursor = fb.offset; 
                 self.selection = fb.selection;
                 return; 
@@ -572,7 +574,7 @@ impl Editor {
     pub fn handle_redo(&mut self) {
         let edits = self.code.redo();
         self.reset_highlight_cache();
-        if let Some(batch) = edits {
+        if let Some(batch) = edits {            
             for edit in batch.edits {
                 match &edit.kind {
                     EditKind::Insert { offset, text } => {
@@ -583,9 +585,10 @@ impl Editor {
                     }
                 }
             }
-            if let Some(fb) = batch.fallback { 
-                self.cursor = fb.offset; 
-                self.selection = fb.selection; 
+            // Restore state
+            if let Some(after) = batch.state_after { 
+                self.cursor = after.offset; 
+                self.selection = after.selection;
                 return; 
             }
         }
@@ -593,9 +596,10 @@ impl Editor {
 
     pub fn set_content(&mut self, content: &str) {
         self.code.tx();
-        self.code.fallback(self.cursor, self.selection);
+        self.code.set_state_before(self.cursor, self.selection);
         self.code.remove(0, self.code.len());
         self.code.insert(0, content);
+        self.code.set_state_after(self.cursor, self.selection);
         self.code.commit();
         self.reset_highlight_cache();
     }
@@ -603,8 +607,11 @@ impl Editor {
     pub fn apply_batch(&mut self, batch: &EditBatch) {
         self.code.tx();
 
-        if let Some(fallback) = &batch.fallback {
-            self.code.fallback(fallback.offset, fallback.selection);
+        if let Some(state) = &batch.state_before {
+            self.code.set_state_before(state.offset, state.selection);
+        }
+        if let Some(state) = &batch.state_after {
+            self.code.set_state_after(state.offset, state.selection);
         }
         
         for edit in &batch.edits {
@@ -700,9 +707,13 @@ impl Editor {
         if let Some(selection) = self.selection.take() {
             let text = self.code.slice(selection.start, selection.end);
             self.set_clipboard(&text)?;
+            self.code.tx();
+            self.code.set_state_after(self.cursor, self.selection);
             self.delete_text(selection.start, selection.end);
             self.cursor = selection.start;
             self.selection = None;
+            self.code.set_state_after(self.cursor, self.selection);
+            self.code.commit();
         }
         Ok(())
     }
@@ -715,11 +726,12 @@ impl Editor {
 
     pub fn paste(&mut self, text: &str) -> Result<()> {
         self.code.tx();
-        self.code.fallback(self.cursor, self.selection);
+        self.code.set_state_before(self.cursor, self.selection);
         self.remove_selection();
         let inserted = self.code.smart_paste(self.cursor, text);
-        self.code.commit();
         self.cursor += inserted;
+        self.code.set_state_after(self.cursor, self.selection);
+        self.code.commit();
         self.reset_highlight_cache();
         Ok(())
     }
@@ -727,22 +739,29 @@ impl Editor {
     pub fn handle_delete_line(&mut self) {
         let (start, end) = self.code.line_boundaries(self.cursor);
 
-        if start == end && start == self.code.len() {
-            return;
-        }
-
+        if start == end && start == self.code.len() { return; }
+        self.code.tx();
+        self.code.set_state_before(self.cursor, self.selection);
         self.delete_text(start, end);
         self.cursor = start;
         self.selection = None;
+        self.code.set_state_after(self.cursor, self.selection);
+        self.code.commit();
+        self.reset_highlight_cache();
     }
 
     pub fn handle_duplicate(&mut self) -> Result<()> {
         if let Some(selection) = &self.selection {
             let text = self.code.slice(selection.start, selection.end);
             let insert_pos = selection.end;
-            self.insert_text(insert_pos, &text);
+            self.code.tx();
+            self.code.set_state_before(self.cursor, self.selection);
+            self.code.insert(insert_pos, &text);
+
             self.cursor = insert_pos + text.chars().count();
             self.selection = None;
+            self.code.set_state_after(self.cursor, self.selection);
+            self.code.commit();
         } else {
             let (line_start, line_end) = self.code.line_boundaries(self.cursor);
             let line_text = self.code.slice(line_start, line_end);
@@ -754,13 +773,19 @@ impl Editor {
             } else {
                 format!("{}\n", line_text)
             };
-            self.insert_text(insert_pos, &to_insert);
+
+            self.code.tx();
+            self.code.set_state_before(self.cursor, self.selection);
+            self.code.insert(insert_pos, &to_insert);
 
             let new_line_len = to_insert.trim_end_matches('\n').chars().count();
             let new_column = column.min(new_line_len);
-
             self.cursor = insert_pos + new_column;
+
+            self.code.set_state_after(self.cursor, self.selection);
+            self.code.commit();
         }
+        self.reset_highlight_cache();
         Ok(())
     }
 
