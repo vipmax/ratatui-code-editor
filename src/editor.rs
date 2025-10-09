@@ -470,7 +470,6 @@ impl Editor {
             indents_added += 1;
         }
         
-        
         if let Some(selection) = &self.selection && !selection.is_empty() {
             let (smin, _) = selection.sorted();
             let mut anchor = self.selection_anchor();
@@ -480,7 +479,7 @@ impl Editor {
                 anchor += indent_text.len();
             } else {
                 self.cursor += indent_text.len();
-                anchor +=indent_text.len() * indents_added;
+                anchor += indent_text.len() * indents_added;
             }
             self.selection = Some(Selection::from_anchor_and_cursor(anchor, self.cursor));
         } else {
@@ -489,7 +488,6 @@ impl Editor {
 
         self.code.set_state_after(self.cursor, self.selection);
         self.code.commit();
-
 
         self.reset_highlight_cache();
     }
@@ -523,7 +521,6 @@ impl Editor {
                 }
             }
         }
-    
     
         if let Some(selection) = &self.selection && !selection.is_empty() {
             let (smin, _) = selection.sorted();

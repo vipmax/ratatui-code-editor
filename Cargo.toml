@@ -28,7 +28,10 @@ name = "marks"
 path = "examples/marks.rs"
 
 [profile.release]
-debug = true
+codegen-units = 1
+lto = true
+opt-level = "s" 
+strip = true 
 
 [dependencies]
 anyhow = "1.0"
