@@ -7,7 +7,7 @@ use crate::history::{History};
 use crate::selection::Selection;
 use rust_embed::RustEmbed;
 use std::collections::HashMap;
-use crate::utils::{indent, count_indent_units};
+use crate::utils::{indent, count_indent_units, comment as lang_comment};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -516,6 +516,10 @@ impl Code {
     
     pub fn indent(&self) -> String {
         indent(&self.lang)
+    }
+
+    pub fn comment(&self) -> String {
+        lang_comment(&self.lang).to_string()
     }
 
     pub fn indentation_level(&self, line: usize, col: usize) -> usize {

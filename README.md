@@ -144,6 +144,7 @@ cargo run --release --example editor <filename>
 - **Ctrl+D** - Duplicate
 - **Ctrl+X** - Cut
 - **Alt+Enter** - go to next line 
+- **Alt+/** - comment/uncomment 
 
 
 ### Selection

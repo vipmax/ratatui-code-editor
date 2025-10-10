@@ -74,6 +74,7 @@ impl Editor {
         let alt = key.modifiers.contains(KeyModifiers::ALT);
 
         match key.code {
+            KeyCode::Char('÷') => self.handle_toggle_comment(),
             KeyCode::Char('z') if ctrl => self.handle_undo(),
             KeyCode::Char('y') if ctrl => self.handle_redo(),
             KeyCode::Char('c') if ctrl => self.handle_copy()?,
@@ -536,6 +537,98 @@ impl Editor {
             self.selection = Some(Selection::from_anchor_and_cursor(anchor, self.cursor));
         } else {
             self.cursor = self.cursor.saturating_sub(indent_len * lines_untabbed);
+        }
+
+        self.code.set_state_after(self.cursor, self.selection);
+        self.code.commit();
+
+        self.reset_highlight_cache();
+    }
+
+    pub fn handle_toggle_comment(&mut self) {
+        self.code.tx();
+        self.code.set_state_before(self.cursor, self.selection);
+
+        let comment_text = self.code.comment();
+        let comment_len = comment_text.chars().count();
+
+        // Collect target lines
+        let lines_to_handle = if let Some(selection) = &self.selection && !selection.is_empty() {
+            let (start, end) = selection.sorted();
+            let (start_row, _) = self.code.point(start);
+            let (end_row, _) = self.code.point(end);
+            (start_row..=end_row).collect::<Vec<_>>()
+        } else {
+            let (row, _) = self.code.point(self.cursor);
+            vec![row]
+        };
+
+        // Determine if ALL lines already have a comment at column 0 (start of line)
+        let mut all_have_comment = true;
+        for line_idx in &lines_to_handle {
+            let line_start = self.code.line_to_char(*line_idx);
+            let check_start = line_start; // start of line
+            let line_len = self.code.line_len(*line_idx);
+            if check_start + comment_len <= line_start + line_len {
+                let slice = self.code.slice(check_start, check_start + comment_len);
+                if slice != comment_text { all_have_comment = false; break; }
+            }
+            else { all_have_comment = false; break; }
+        }
+
+        // Apply changes in reverse order for stable offsets
+        let mut comments_added = 0usize;
+        let mut comments_removed = 0usize;
+        for line_idx in lines_to_handle.into_iter().rev() {
+            let line_start = self.code.line_to_char(line_idx);
+            let insert_pos = line_start; // start of line
+
+            if all_have_comment {
+                // Remove only if present at position
+                let line_len = self.code.line_len(line_idx);
+                if insert_pos + comment_len <= line_start + line_len {
+                    let slice = self.code.slice(insert_pos, insert_pos + comment_len);
+                    if slice == comment_text {
+                        self.code.remove(insert_pos, insert_pos + comment_len);
+                        comments_removed += 1;
+                    }
+                }
+            } else {
+                // Insert comment at start of line
+                self.code.insert(insert_pos, &comment_text);
+                comments_added += 1;
+            }
+        }
+
+        // Update cursor/selection
+        if let Some(selection) = &self.selection && !selection.is_empty() {
+            let (smin, _) = selection.sorted();
+            let mut anchor = self.selection_anchor();
+            let is_selection_forward = anchor == smin;
+            if is_selection_forward {
+                if !all_have_comment {
+                    self.cursor += comment_len * comments_added;
+                    anchor += comment_len;
+                } else {
+                    self.cursor = self.cursor.saturating_sub(comment_len * comments_removed);
+                    anchor = anchor.saturating_sub(comment_len);
+                }
+            } else {
+                if !all_have_comment {
+                    self.cursor += comment_len;
+                    anchor += comment_len * comments_added;
+                } else {
+                    self.cursor = self.cursor.saturating_sub(comment_len);
+                    anchor = anchor.saturating_sub(comment_len * comments_removed);
+                }
+            }
+            self.selection = Some(Selection::from_anchor_and_cursor(anchor, self.cursor));
+        } else {
+            if !all_have_comment {
+                self.cursor += comment_len;
+            } else {
+                self.cursor = self.cursor.saturating_sub(comment_len);
+            }
         }
 
         self.code.set_state_after(self.cursor, self.selection);

@@ -41,6 +41,14 @@ pub fn indent(lang: &str) -> String {
     }
 }
 
+pub fn comment(lang: &str) -> &'static str {
+    match lang {
+        "python" | "shell" => "#",
+        "lua" => "--",
+        _ => "//",
+    }
+}
+
 pub fn count_indent_units(
     line: ropey::RopeSlice<'_>, 
     indent_unit: &str, 
