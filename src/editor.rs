@@ -11,6 +11,7 @@ use crate::click::{ClickKind, ClickTracker};
 use crate::code::Code;
 use crate::code::{EditKind, EditBatch};
 use crate::selection::{Selection, SelectionSnap};
+use crate::actions::*;
 use crate::utils;
 use std::collections::HashMap;
 use std::cell::RefCell;
@@ -71,29 +72,28 @@ impl Editor {
 
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let _alt = key.modifiers.contains(KeyModifiers::ALT);
 
         match key.code {
-            KeyCode::Char('÷') => self.handle_toggle_comment(),
-            KeyCode::Char('z') if ctrl => self.handle_undo(),
-            KeyCode::Char('y') if ctrl => self.handle_redo(),
-            KeyCode::Char('c') if ctrl => self.handle_copy()?,
-            KeyCode::Char('v') if ctrl => self.handle_paste()?,
-            KeyCode::Char('x') if ctrl => self.handle_cut()?,
-            KeyCode::Char('k') if ctrl => self.handle_delete_line(),
-            KeyCode::Char('d') if ctrl => self.handle_duplicate()?,
-            KeyCode::Char('a') if ctrl => self.handle_select_all(),
+            KeyCode::Char('÷') => self.apply(ToggleComment { }),
+            KeyCode::Char('z') if ctrl => self.apply(Undo { }),
+            KeyCode::Char('y') if ctrl => self.apply(Redo { }),
+            KeyCode::Char('c') if ctrl => self.apply(Copy { }),
+            KeyCode::Char('v') if ctrl => self.apply(Paste { }),
+            KeyCode::Char('x') if ctrl => self.apply(Cut { }),
+            KeyCode::Char('k') if ctrl => self.apply(DeleteLine { }),
+            KeyCode::Char('d') if ctrl => self.apply(Duplicate { }),
+            KeyCode::Char('a') if ctrl => self.apply(SelectAll { }),
 
-            KeyCode::Enter     if alt => self.handle_enter(true),
-            KeyCode::Left      => self.handle_left(shift),
-            KeyCode::Right     => self.handle_right(shift),
-            KeyCode::Up        => self.handle_up(shift),
-            KeyCode::Down      => self.handle_down(shift),
-            KeyCode::Backspace => self.handle_delete(),
-            KeyCode::Enter     => self.handle_enter(false),
-            KeyCode::Char(c)   => self.handle_char(c),
-            KeyCode::Tab       => self.handle_tab(),
-            KeyCode::BackTab   => self.handle_untab(),
+            KeyCode::Left      => self.apply(MoveLeft { shift }),
+            KeyCode::Right     => self.apply(MoveRight { shift }),
+            KeyCode::Up        => self.apply(MoveUp { shift }),
+            KeyCode::Down      => self.apply(MoveDown { shift }),
+            KeyCode::Backspace => self.apply(Delete { }),
+            KeyCode::Enter     => self.apply(InsertNewline { }),
+            KeyCode::Char(c)   => self.apply(InsertText { text: c.to_string() }),
+            KeyCode::Tab       => self.apply(Indent { }),
+            KeyCode::BackTab   => self.apply(UnIndent { }),
             _ => {}
         }
 
@@ -304,384 +304,29 @@ impl Editor {
         Some(line_start_char + char_idx)
     }
 
-    fn handle_left(&mut self, shift: bool) {
-        if !shift && let Some(selection) = &self.selection && !selection.is_empty() {
-            let (start, _) = selection.sorted();
-            self.cursor = start;
-            self.selection = None;
-            return;
-        } 
-
-        if self.cursor > 0 {
-            let new_cursor = self.cursor - 1;
-            self.update_selection(new_cursor, shift);
-            self.cursor = new_cursor;
-        }
+    /// Clears any active selection.
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
     }
 
-    fn handle_right(&mut self, shift: bool) {
-        if !shift && let Some(selection) = &self.selection && !selection.is_empty() {
-            let (_, end) = selection.sorted();
-            self.cursor = end;
-            self.selection = None;
-            return;
-        } 
-
-        if self.cursor < self.code.len() {
-            let new_cursor = self.cursor + 1;
-            self.update_selection(new_cursor, shift);
-            self.cursor = new_cursor;
-        }
+    /// Extends or starts a selection from the current cursor to `new_cursor`.
+    pub fn extend_selection(&mut self, new_cursor: usize) {
+        // If there was already a selection, preserve the anchor (start point)
+        // otherwise, use the current cursor as the anchor.
+        let anchor = self.selection_anchor();
+        self.selection = Some(Selection::from_anchor_and_cursor(anchor, new_cursor));
     }
-
-    fn handle_up(&mut self, shift: bool) {
-        let (row, col) = self.code.point(self.cursor);
-        if row > 0 {
-            let prev_line_start = self.code.line_to_char(row - 1);
-            let prev_line_len = self.code.line_len(row - 1);
-            let new_col = if prev_line_len < col { prev_line_len } else { col };
-            let new_cursor = prev_line_start + new_col;
-            self.update_selection(new_cursor, shift);
-            self.cursor = new_cursor;
-        }
-    }
-
-    fn handle_down(&mut self, shift: bool) {
-        let (row, col) = self.code.point(self.cursor);
-        if row + 1 < self.code.len_lines() {
-            let next_line_start = self.code.line_to_char(row + 1);
-            let next_line_len = self.code.line_len(row + 1);
-            let new_col = if next_line_len < col { next_line_len } else { col };
-            let new_cursor = next_line_start + new_col;
-            self.update_selection(new_cursor, shift);
-            self.cursor = new_cursor;
-        }
-    }
-
-    fn update_selection(&mut self, new_cursor: usize, shift: bool) {
-        if shift {
-            let anchor = self.selection_anchor();
-            self.selection = Some(Selection::from_anchor_and_cursor(anchor, new_cursor));
-        } else {
-            self.selection = None;
-        }
-    }
-
-    fn selection_anchor(&self) -> usize {
+    
+    /// Returns the selection anchor position, or the cursor if no selection exists.
+    pub fn selection_anchor(&self) -> usize {
         self.selection
             .as_ref()
             .map(|s| if self.cursor == s.start { s.end } else { s.start })
             .unwrap_or(self.cursor)
     }
 
-    pub fn handle_char(&mut self, text: char) {
-        let text = text.to_string();
-        self.code.tx();
-        self.code.set_state_before(self.cursor, self.selection);
-        self.remove_selection();
-        self.code.insert(self.cursor, &text);
-        self.cursor += text.chars().count();
-        self.code.set_state_after(self.cursor, self.selection);
-        self.code.commit();
-        self.reset_highlight_cache();
-    }
-
-    pub fn handle_enter(&mut self, move_end: bool) {
-        if move_end { // move cursor to the end of line
-            let (row, _) = self.code.point(self.cursor);
-            let line_end = self.code.offset(row, 0) + self.code.line_len(row);
-            self.cursor = line_end.saturating_sub(1);
-        }
-        self.code.tx();
-        self.code.set_state_before(self.cursor, self.selection);
-        self.remove_selection();
-        let (row, col) = self.code.point(self.cursor);
-        let indent_level = self.code.indentation_level(row, col);
-        let indent_text = self.code.indent().repeat(indent_level);
-        let text = format!("\n{}", indent_text);
-        self.code.insert(self.cursor, &text);
-        self.cursor += text.chars().count();
-        self.code.set_state_after(self.cursor, self.selection);
-        self.code.commit();
-        self.reset_highlight_cache();
-    }
-
-
-
-    pub fn delete_text(&mut self, from: usize, to: usize) {
-        self.code.tx();
-        self.code.set_state_before(self.cursor, self.selection);
-        self.code.remove(from, to);
-        self.code.commit();
-        self.reset_highlight_cache();
-    }
-
-    pub fn remove_selection(&mut self) {
-        if let Some(selection) = &self.selection {
-            if selection.is_empty() {
-                self.selection = None;
-                return;
-            }
-            let (start, end) = selection.sorted();
-            self.code.remove(start, end);
-            self.cursor = start;
-            self.selection = None;
-            self.reset_highlight_cache();
-        }
-    }
-
-    fn handle_delete(&mut self) {
-        if let Some(selection) = &self.selection && !selection.is_empty() {
-            let (start, end) = selection.sorted();
-            self.delete_text(start, end);
-            self.cursor = start;
-            self.selection = None;
-        } else if self.cursor > 0 {
-            let (row, col) = self.code.point(self.cursor);
-            if self.code.is_only_indentation_before(row, col) {
-                let from = self.cursor - col;
-                self.delete_text(from, self.cursor);
-                self.cursor = from;
-            } else {
-                self.delete_text(self.cursor - 1, self.cursor);
-                self.cursor -= 1;
-            }
-        }
-    }
-
-    pub fn handle_tab(&mut self) {
-        self.code.tx();
-        self.code.set_state_before(self.cursor, self.selection);
-        
-        let indent_text = self.code.indent();
-        let lines_to_handle = if let Some(selection) = &self.selection && !selection.is_empty() {
-            let (start, end) = selection.sorted();
-            let (start_row, _) = self.code.point(start);
-            let (end_row, _) = self.code.point(end);
-            (start_row..=end_row).collect::<Vec<_>>()
-        } else {
-            let (row, _) = self.code.point(self.cursor);
-            vec![row]
-        };
-
-        let mut indents_added = 0;
-        for line_idx in lines_to_handle.into_iter().rev() {
-            let line_start = self.code.line_to_char(line_idx);
-            self.code.insert(line_start, &indent_text);
-            indents_added += 1;
-        }
-        
-        if let Some(selection) = &self.selection && !selection.is_empty() {
-            let (smin, _) = selection.sorted();
-            let mut anchor = self.selection_anchor();
-            let is_selection_forward = anchor == smin;
-            if is_selection_forward {
-                self.cursor += indent_text.len() * indents_added;
-                anchor += indent_text.len();
-            } else {
-                self.cursor += indent_text.len();
-                anchor += indent_text.len() * indents_added;
-            }
-            self.selection = Some(Selection::from_anchor_and_cursor(anchor, self.cursor));
-        } else {
-            self.cursor += indent_text.len();
-        }
-
-        self.code.set_state_after(self.cursor, self.selection);
-        self.code.commit();
-
-        self.reset_highlight_cache();
-    }
-
-    pub fn handle_untab(&mut self) {
-        self.code.tx();
-        self.code.set_state_before(self.cursor, self.selection);
-        
-        let indent_text = self.code.indent();
-        let indent_len = indent_text.chars().count();
-
-        let lines_to_handle = if let Some(selection) = &self.selection && !selection.is_empty() {
-            let (start, end) = selection.sorted();
-            let (start_row, _) = self.code.point(start);
-            let (end_row, _) = self.code.point(end);
-            (start_row..=end_row).collect::<Vec<_>>()
-        } else {
-            let (row, _) = self.code.point(self.cursor);
-            vec![row]
-        };
-    
-        let mut lines_untabbed = 0;
-        for line_idx in lines_to_handle.into_iter().rev() {
-            if let Some(indent_cols) = self.code.find_indent_at_line_start(line_idx) {
-                let remove_count = indent_cols.min(indent_len);
-                if remove_count > 0 {
-                    let line_start = self.code.line_to_char(line_idx);
-                    let indent_end = line_start + remove_count;
-                    self.code.remove(line_start, indent_end);
-                    lines_untabbed += 1;
-                }
-            }
-        }
-    
-        if let Some(selection) = &self.selection && !selection.is_empty() {
-            let (smin, _) = selection.sorted();
-            let mut anchor = self.selection_anchor();
-            let is_selection_forward = anchor == smin;
-            if is_selection_forward {
-                self.cursor = self.cursor.saturating_sub(indent_len * lines_untabbed);
-                anchor = anchor.saturating_sub(indent_len);
-            } else {
-                self.cursor = self.cursor.saturating_sub(indent_len);
-                anchor = anchor.saturating_sub(indent_len * lines_untabbed);
-            }
-            self.selection = Some(Selection::from_anchor_and_cursor(anchor, self.cursor));
-        } else {
-            self.cursor = self.cursor.saturating_sub(indent_len * lines_untabbed);
-        }
-
-        self.code.set_state_after(self.cursor, self.selection);
-        self.code.commit();
-
-        self.reset_highlight_cache();
-    }
-
-    pub fn handle_toggle_comment(&mut self) {
-        self.code.tx();
-        self.code.set_state_before(self.cursor, self.selection);
-
-        let comment_text = self.code.comment();
-        let comment_len = comment_text.chars().count();
-
-        // Collect target lines
-        let lines_to_handle = if let Some(selection) = &self.selection && !selection.is_empty() {
-            let (start, end) = selection.sorted();
-            let (start_row, _) = self.code.point(start);
-            let (end_row, _) = self.code.point(end);
-            (start_row..=end_row).collect::<Vec<_>>()
-        } else {
-            let (row, _) = self.code.point(self.cursor);
-            vec![row]
-        };
-
-        // Determine if ALL lines already have a comment at column 0 (start of line)
-        let mut all_have_comment = true;
-        for line_idx in &lines_to_handle {
-            let line_start = self.code.line_to_char(*line_idx);
-            let check_start = line_start; // start of line
-            let line_len = self.code.line_len(*line_idx);
-            if check_start + comment_len <= line_start + line_len {
-                let slice = self.code.slice(check_start, check_start + comment_len);
-                if slice != comment_text { all_have_comment = false; break; }
-            }
-            else { all_have_comment = false; break; }
-        }
-
-        // Apply changes in reverse order for stable offsets
-        let mut comments_added = 0usize;
-        let mut comments_removed = 0usize;
-        for line_idx in lines_to_handle.into_iter().rev() {
-            let line_start = self.code.line_to_char(line_idx);
-            let insert_pos = line_start; // start of line
-
-            if all_have_comment {
-                // Remove only if present at position
-                let line_len = self.code.line_len(line_idx);
-                if insert_pos + comment_len <= line_start + line_len {
-                    let slice = self.code.slice(insert_pos, insert_pos + comment_len);
-                    if slice == comment_text {
-                        self.code.remove(insert_pos, insert_pos + comment_len);
-                        comments_removed += 1;
-                    }
-                }
-            } else {
-                // Insert comment at start of line
-                self.code.insert(insert_pos, &comment_text);
-                comments_added += 1;
-            }
-        }
-
-        // Update cursor/selection
-        if let Some(selection) = &self.selection && !selection.is_empty() {
-            let (smin, _) = selection.sorted();
-            let mut anchor = self.selection_anchor();
-            let is_selection_forward = anchor == smin;
-            if is_selection_forward {
-                if !all_have_comment {
-                    self.cursor += comment_len * comments_added;
-                    anchor += comment_len;
-                } else {
-                    self.cursor = self.cursor.saturating_sub(comment_len * comments_removed);
-                    anchor = anchor.saturating_sub(comment_len);
-                }
-            } else {
-                if !all_have_comment {
-                    self.cursor += comment_len;
-                    anchor += comment_len * comments_added;
-                } else {
-                    self.cursor = self.cursor.saturating_sub(comment_len);
-                    anchor = anchor.saturating_sub(comment_len * comments_removed);
-                }
-            }
-            self.selection = Some(Selection::from_anchor_and_cursor(anchor, self.cursor));
-        } else {
-            if !all_have_comment {
-                self.cursor += comment_len;
-            } else {
-                self.cursor = self.cursor.saturating_sub(comment_len);
-            }
-        }
-
-        self.code.set_state_after(self.cursor, self.selection);
-        self.code.commit();
-
-        self.reset_highlight_cache();
-    }
-
-    pub fn handle_undo(&mut self) {
-        let edits = self.code.undo();
-        self.reset_highlight_cache();
-        if let Some(batch) = edits {            
-            // Fallback to computing cursor position from edits
-            for edit in batch.edits.iter().rev()  {
-                match &edit.kind {
-                    EditKind::Insert { offset, text: _ } => {
-                        self.cursor = *offset;
-                    }
-                    EditKind::Remove { offset, text } => {
-                        self.cursor = *offset + text.chars().count();
-                    }
-                }
-            }
-            // Restore state
-            if let Some(fb) = batch.state_before { 
-                self.cursor = fb.offset; 
-                self.selection = fb.selection;
-                return; 
-            }
-        }
-    }
-
-    pub fn handle_redo(&mut self) {
-        let edits = self.code.redo();
-        self.reset_highlight_cache();
-        if let Some(batch) = edits {            
-            for edit in batch.edits {
-                match &edit.kind {
-                    EditKind::Insert { offset, text } => {
-                        self.cursor = *offset + text.chars().count();
-                    }
-                    EditKind::Remove { offset, text: _ } => {
-                        self.cursor = *offset;
-                    }
-                }
-            }
-            // Restore state
-            if let Some(after) = batch.state_after { 
-                self.cursor = after.offset; 
-                self.selection = after.selection;
-                return; 
-            }
-        }
+    pub fn apply<A: Action>(&mut self, mut action: A) {
+        action.apply(self);
     }
 
     pub fn set_content(&mut self, content: &str) {
@@ -735,7 +380,6 @@ impl Editor {
         }
     }
 
-
     pub fn scroll_up(&mut self) {
         if self.offset_y > 0 {
             self.offset_y -= 1;
@@ -785,106 +429,6 @@ impl Editor {
             .ok_or_else(|| anyhow!("cant get clipboard"))
     }
 
-    pub fn handle_copy(&mut self) -> Result<()> {
-        if let Some(selection) = &self.selection {
-            let text = self.code.slice(selection.start, selection.end);
-            self.set_clipboard(&text)?;
-        }
-        Ok(())
-    }
-
-    pub fn handle_cut(&mut self) -> Result<()> {
-        if let Some(selection) = self.selection.take() {
-            let text = self.code.slice(selection.start, selection.end);
-            self.set_clipboard(&text)?;
-            self.code.tx();
-            self.code.set_state_after(self.cursor, self.selection);
-            self.delete_text(selection.start, selection.end);
-            self.cursor = selection.start;
-            self.selection = None;
-            self.code.set_state_after(self.cursor, self.selection);
-            self.code.commit();
-        }
-        Ok(())
-    }
-
-    pub fn handle_paste(&mut self) -> Result<()> {
-        let text = self.get_clipboard()?;
-        self.paste(&text)?;
-        Ok(())
-    }
-
-    pub fn paste(&mut self, text: &str) -> Result<()> {
-        self.code.tx();
-        self.code.set_state_before(self.cursor, self.selection);
-        self.remove_selection();
-        let inserted = self.code.smart_paste(self.cursor, text);
-        self.cursor += inserted;
-        self.code.set_state_after(self.cursor, self.selection);
-        self.code.commit();
-        self.reset_highlight_cache();
-        Ok(())
-    }
-
-    pub fn handle_delete_line(&mut self) {
-        let (start, end) = self.code.line_boundaries(self.cursor);
-
-        if start == end && start == self.code.len() { return; }
-        self.code.tx();
-        self.code.set_state_before(self.cursor, self.selection);
-        self.delete_text(start, end);
-        self.cursor = start;
-        self.selection = None;
-        self.code.set_state_after(self.cursor, self.selection);
-        self.code.commit();
-        self.reset_highlight_cache();
-    }
-
-    pub fn handle_duplicate(&mut self) -> Result<()> {
-        if let Some(selection) = &self.selection {
-            let text = self.code.slice(selection.start, selection.end);
-            let insert_pos = selection.end;
-            self.code.tx();
-            self.code.set_state_before(self.cursor, self.selection);
-            self.code.insert(insert_pos, &text);
-
-            self.cursor = insert_pos + text.chars().count();
-            self.selection = None;
-            self.code.set_state_after(self.cursor, self.selection);
-            self.code.commit();
-        } else {
-            let (line_start, line_end) = self.code.line_boundaries(self.cursor);
-            let line_text = self.code.slice(line_start, line_end);
-            let column = self.cursor - line_start;
-
-            let insert_pos = line_end;
-            let to_insert = if line_text.ends_with('\n') {
-                line_text.clone()
-            } else {
-                format!("{}\n", line_text)
-            };
-
-            self.code.tx();
-            self.code.set_state_before(self.cursor, self.selection);
-            self.code.insert(insert_pos, &to_insert);
-
-            let new_line_len = to_insert.trim_end_matches('\n').chars().count();
-            let new_column = column.min(new_line_len);
-            self.cursor = insert_pos + new_column;
-
-            self.code.set_state_after(self.cursor, self.selection);
-            self.code.commit();
-        }
-        self.reset_highlight_cache();
-        Ok(())
-    }
-
-    pub fn handle_select_all(&mut self) {
-        let from = 0;
-        let to = self.code.len_chars();
-        self.selection = Some(Selection::new(from, to));
-    }
-
     pub fn set_marks(&mut self, marks: Vec<(usize, usize, &str)>) {
         self.marks = Some(
             marks.into_iter()
@@ -920,8 +464,8 @@ impl Editor {
        return self.selection;
     }
 
-    pub fn set_selection(&mut self, selection: Selection) {
-        self.selection = Some(selection);
+    pub fn set_selection(&mut self, selection: Option<Selection>) {
+        self.selection = selection;
     }
 
     pub fn set_offset_y(&mut self, offset_y: usize) {
@@ -940,6 +484,14 @@ impl Editor {
         self.offset_x
     }
 
+    pub fn code_mut(&mut self) -> &mut Code {
+        &mut self.code
+    }
+
+    pub fn code_ref(&mut self) -> &Code {
+        &self.code
+    }
+
     fn cached_highlight_interval(
         &self, start: usize, end: usize, theme: &Theme
     ) -> Vec<(usize, usize, Style)> {
@@ -954,7 +506,7 @@ impl Editor {
         highlights
     }
 
-    fn reset_highlight_cache(&self) {
+    pub fn reset_highlight_cache(&self) {
         self.highlights_cache.borrow_mut().clear();
     }
     
