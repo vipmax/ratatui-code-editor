@@ -15,6 +15,7 @@ use crate::actions::*;
 use crate::utils;
 use std::collections::HashMap;
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use anyhow::{Result, anyhow};
 
 // keyword and ratatui style
@@ -64,9 +65,7 @@ impl Editor {
     }
 
     pub fn input(
-        &mut self,
-        key: KeyEvent,
-        area: &Rect,
+        &mut self, key: KeyEvent, area: &Rect,
     ) -> Result<()> {
         use crossterm::event::KeyCode;
 
@@ -84,7 +83,6 @@ impl Editor {
             KeyCode::Char('k') if ctrl => self.apply(DeleteLine { }),
             KeyCode::Char('d') if ctrl => self.apply(Duplicate { }),
             KeyCode::Char('a') if ctrl => self.apply(SelectAll { }),
-
             KeyCode::Left      => self.apply(MoveLeft { shift }),
             KeyCode::Right     => self.apply(MoveRight { shift }),
             KeyCode::Up        => self.apply(MoveUp { shift }),
@@ -96,9 +94,7 @@ impl Editor {
             KeyCode::BackTab   => self.apply(UnIndent { }),
             _ => {}
         }
-
         self.focus(&area);
-
         Ok(())
     }
     
@@ -137,15 +133,12 @@ impl Editor {
         match mouse.kind {
             MouseEventKind::ScrollUp => self.scroll_up(),
             MouseEventKind::ScrollDown => self.scroll_down(area.height as usize),
-
             MouseEventKind::Down(MouseButton::Left) => {
                 let pos = self.cursor_from_mouse(mouse.column, mouse.row, area);
-
                 if let Some(cursor) = pos {
                     self.handle_mouse_down(cursor);
                 }
             }
-
             MouseEventKind::Drag(MouseButton::Left) => {
                 // Auto-scroll when dragging on the last or first visible row
                 if mouse.row == area.top() {
@@ -154,20 +147,16 @@ impl Editor {
                 if mouse.row == area.bottom().saturating_sub(1) {
                     self.scroll_down(area.height as usize);
                 }
-
                 let pos = self.cursor_from_mouse(mouse.column, mouse.row, area);
                 if let Some(cursor) = pos {
                     self.handle_mouse_drag(cursor);
                 }
             }
-
             MouseEventKind::Up(MouseButton::Left) => {
                 self.selection_snap = SelectionSnap::None;
             }
-
             _ => {}
         }
-
         Ok(())
     }
 
@@ -175,12 +164,12 @@ impl Editor {
         let kind = self.clicks.register(cursor);
         let (start, end, snap) = match kind {
             ClickKind::Triple => {
-                let (s, e) = self.code.line_boundaries(cursor);
-                (s, e, SelectionSnap::Line { anchor: cursor })
+                let (line_start, line_end) = self.code.line_boundaries(cursor);
+                (line_start, line_end, SelectionSnap::Line { anchor: cursor })
             }
             ClickKind::Double => {
-                let (s, e) = self.code.word_boundaries(cursor);
-                (s, e, SelectionSnap::Word { anchor: cursor })
+                let (word_start, word_end) = self.code.word_boundaries(cursor);
+                (word_start, word_end, SelectionSnap::Word { anchor: cursor })
             }
             ClickKind::Single => (cursor, cursor, SelectionSnap::None),
         };
@@ -193,52 +182,36 @@ impl Editor {
     fn handle_mouse_drag(&mut self, cursor: usize) {
         match self.selection_snap {
             SelectionSnap::Line { anchor } => {
-                self.handle_line_drag(cursor, anchor);
+                let (anchor_start, anchor_end) = self.code.line_boundaries(anchor);
+                let (cur_start, cur_end) = self.code.line_boundaries(cursor);
+        
+                let (sel_start, sel_end, new_cursor) = match cursor.cmp(&anchor) {
+                    Ordering::Greater => (anchor_start, cur_end, cur_end),   // forward
+                    Ordering::Less => (cur_start, anchor_end, cur_start),    // backward
+                    Ordering::Equal => (anchor_start, anchor_end, anchor_end), 
+                };
+        
+                self.selection = Some(Selection::from_anchor_and_cursor(sel_start, sel_end));
+                self.cursor = new_cursor;
             }
             SelectionSnap::Word { anchor } => {
-                self.handle_word_drag(cursor, anchor);
+                let (anchor_start, anchor_end) = self.code.word_boundaries(anchor);
+                let (cur_start, cur_end) = self.code.word_boundaries(cursor);
+        
+                let (sel_start, sel_end, new_cursor) = match cursor.cmp(&anchor) {
+                    Ordering::Greater => (anchor_start, cur_end, cur_end),   // forward
+                    Ordering::Less => (cur_start, anchor_end, cur_start),    // backward
+                    Ordering::Equal => (anchor_start, anchor_end, anchor_end),
+                };
+        
+                self.selection = Some(Selection::from_anchor_and_cursor(sel_start, sel_end));
+                self.cursor = new_cursor;
             }
             SelectionSnap::None => {
                 let anchor = self.selection_anchor();
                 self.selection = Some(Selection::from_anchor_and_cursor(anchor, cursor));
                 self.cursor = cursor;
             }
-        }
-    }
-
-    fn handle_word_drag(&mut self, cursor: usize, anchor_pos: usize) {
-        let (anchor_start, anchor_end) = self.code.word_boundaries(anchor_pos);
-        let (cur_start, cur_end) = self.code.word_boundaries(cursor);
-
-        if cursor > anchor_pos {
-            let snapped = cur_end;
-            self.selection = Some(Selection::from_anchor_and_cursor(anchor_start, snapped));
-            self.cursor = snapped;
-        } else if cursor < anchor_pos {
-            let snapped = cur_start;
-            self.selection = Some(Selection::from_anchor_and_cursor(snapped, anchor_end));
-            self.cursor = snapped;
-        } else {
-            self.selection = Some(Selection::new(anchor_start, anchor_end));
-            self.cursor = anchor_end;
-        }
-    }
-
-    fn handle_line_drag(&mut self, cursor: usize, anchor_pos: usize) {
-        let (anchor_start, anchor_end) = self.code.line_boundaries(anchor_pos);
-        let (cur_start, cur_end) = self.code.line_boundaries(cursor);
-
-        if cursor > anchor_pos {
-            let snapped = cur_end;
-            self.selection = Some(Selection::from_anchor_and_cursor(anchor_start, snapped));
-            self.cursor = snapped;
-        } else if cursor < anchor_pos {
-            let snapped = cur_start;
-            self.selection = Some(Selection::from_anchor_and_cursor(snapped, anchor_end));
-            self.cursor = snapped;
-        } else {
-            self.selection = Some(Selection::new(anchor_start, anchor_end));
-            self.cursor = anchor_end;
         }
     }
 
