@@ -11,13 +11,14 @@ A code editor widget for [Ratatui](https://github.com/ratatui/ratatui), built wi
 
 - 🎨 **Syntax Highlighting** - Powered by Tree-sitter with support for multiple languages
 - 📝 **Text Editing** - Full text editing capabilities with cursor movement
-- 🖱️ **Mouse Support** - Click to position cursor, drag to select text, words and lines snapping supported 
+- 🖱️ **Mouse Support** - Click to position cursor, drag to select text, words and lines snapping supported
 - 📋 **Copy/Paste** - Clipboard integration with system clipboard
 - 🔄 **Undo/Redo** - Full history management for edit operations
 - 🎯 **Text Selection** - Visual text selection with keyboard and mouse
 - 🌈 **Themes** - Customizable color themes for syntax highlighting
 - 📱 **Responsive** - Adapts to terminal window size changes
 - 🔖 **Visual Highlight Marks** - Highlight specific regions in the editor
+- 🧩 **Emoji/Unicode Aware** - Correct widths, cursor, and selection for grapheme clusters (e.g., ❤️)
 
 ## Syntax Highlighting: Fast, Cached, and Wide-Row Ready
 
@@ -211,4 +212,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - Built on top of the excellent [Ratatui](https://github.com/ratatui/ratatui) TUI framework
 - Syntax highlighting powered by [Tree-sitter](https://tree-sitter.github.io/)
-- Text editing functionality inspired by modern code editors
+- Awesome list of ratatui crates and applications [awesome-ratatui](https://github.com/ratatui/awesome-ratatui)
