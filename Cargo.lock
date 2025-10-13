@@ -661,6 +661,7 @@ dependencies = [
  "tree-sitter-toml-ng",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
+ "unicode-segmentation",
  "unicode-width 0.2.0",
 ]
 

@@ -5,11 +5,11 @@ use crossterm::event::{
 use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::{prelude::*, widgets::Widget};
-use unicode_width::UnicodeWidthChar;
 use std::time::Duration;
 use crate::click::{ClickKind, ClickTracker};
 use crate::code::Code;
 use crate::code::{EditKind, EditBatch};
+use crate::code::{RopeGraphemes, grapheme_width_and_chars_len, grapheme_width, grapheme_width_and_bytes_len};
 use crate::selection::{Selection, SelectionSnap};
 use crate::actions::*;
 use crate::utils;
@@ -246,25 +246,18 @@ impl Editor {
         let char_start = line_start_char + start_col;
         let char_end = line_start_char + end_col;
     
-        let visible_chars = self.code.char_slice(char_start, char_end);
-    
         let mut current_col = 0;
-        let mut char_idx = start_col;
-    
-        for ch in visible_chars.chars() {
-            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(1);
-            if current_col + ch_width > clicked_col {
-                break;
-            }
-            current_col += ch_width;
-            char_idx += 1;
+        let mut char_idx = start_col;        
+        let visible_chars = self.code.char_slice(char_start, char_end);
+        for g in RopeGraphemes::new(&visible_chars) {
+            let (g_width, g_chars) = grapheme_width_and_chars_len(g);        
+            if current_col + g_width > clicked_col { break; }
+            current_col += g_width;
+            char_idx += g_chars;
         }
     
         let line = self.code.char_slice(line_start_char, line_start_char + line_len);
-
-        let visual_width: usize = line.chars()
-            .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1))
-            .sum();
+        let visual_width: usize = RopeGraphemes::new(&line).map(grapheme_width).sum();
     
         if clicked_col + self.offset_x >= visual_width {
             let mut end_idx = line.len_chars();
@@ -501,13 +494,15 @@ impl Editor {
             let max_x = (area.width as usize).saturating_sub(line_number_width);
             let start_col = self.offset_x;
                 
-            let cursor_visual_col: usize = self.code
-                .char_slice(line_start_char, line_start_char + cursor_char_col.min(line_len))
-                .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1)).sum();
-        
-            let offset_visual_col: usize = self.code
-                .char_slice(line_start_char, line_start_char + start_col.min(line_len))
-                .chars().map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1)).sum();
+            let cursor_visual_col: usize = {
+                let slice = self.code.char_slice(line_start_char, line_start_char + cursor_char_col.min(line_len));
+                RopeGraphemes::new(&slice).map(grapheme_width).sum()
+            };
+            
+            let offset_visual_col: usize = {
+                let slice = self.code.char_slice(line_start_char, line_start_char + start_col.min(line_len));
+                RopeGraphemes::new(&slice).map(grapheme_width).sum()
+            };
         
             let relative_visual_col = cursor_visual_col.saturating_sub(offset_visual_col);
             let visible_x = relative_visual_col.min(max_x);
@@ -604,24 +599,27 @@ impl Widget for &Editor {
                 let mut x = 0;
                 let mut byte_idx_in_rope = start_byte;
             
-                for ch in chars.chars().take(max_x) {
-                    if x >= max_x { break }
-            
-                    let ch_width = UnicodeWidthChar::width(ch).unwrap_or(1);
-                    let ch_len = ch.len_utf8();
-            
-                    let draw_x = area.left() + line_number_width as u16 + x as u16;
+                for g in RopeGraphemes::new(&chars) {
+                    let (g_width, g_bytes) = grapheme_width_and_bytes_len(g);
+                
+                    if x >= max_x { break; }
+                
+                    let start_x = area.left() + line_number_width as u16 + x as u16;
                     let draw_y = area.top() + screen_y as u16;
-            
-                    for &(start, end, s) in &highlights {
-                        if start <= byte_idx_in_rope && byte_idx_in_rope < end {
-                            buf[(draw_x, draw_y)].set_style(s);
-                            break;
+                
+                    for dx in 0..g_width {
+                        if x + dx >= max_x { break; }
+                        let draw_x = start_x + dx as u16;
+                        for &(start, end, s) in &highlights {
+                            if start <= byte_idx_in_rope && byte_idx_in_rope < end {
+                                buf[(draw_x, draw_y)].set_style(s);
+                                break;
+                            }
                         }
                     }
-            
-                    x += ch_width;
-                    byte_idx_in_rope += ch_len;
+                
+                    x = x.saturating_add(g_width);
+                    byte_idx_in_rope += g_bytes;
                 }
             }
         }
@@ -658,19 +656,24 @@ impl Widget for &Editor {
                 let visible_chars = self.code.char_slice(char_slice_start, char_slice_end);
 
                 let draw_y = area.top() + (line_idx - self.offset_y) as u16;
-                let mut visual_x = 0;
+                let mut visual_x: u16 = 0;
                 let mut char_col = start_col;
-        
-                for ch in visible_chars.chars() {
-                    if char_col >= rel_start && char_col < rel_end {
-                        let draw_x = area.left() + line_number_width as u16 + visual_x;
-                        if draw_x < area.right() && draw_y < area.bottom() {
-                            buf[(draw_x, draw_y)].set_style(Style::default().bg(Color::DarkGray));
+
+                for g in RopeGraphemes::new(&visible_chars) {
+                    let (g_width, g_chars) = grapheme_width_and_chars_len(g);
+                
+                    if char_col < rel_end && char_col + g_chars > rel_start {
+                        let start_x = area.left() + line_number_width as u16 + visual_x;
+                        for dx in 0..g_width as u16 {
+                            let draw_x = start_x + dx;
+                            if draw_x < area.right() && draw_y < area.bottom() {
+                                buf[(draw_x, draw_y)].set_style(Style::default().bg(Color::DarkGray));
+                            }
                         }
                     }
-        
-                    visual_x += UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
-                    char_col += 1;
+                
+                    visual_x = visual_x.saturating_add(g_width as u16);
+                    char_col += g_chars;
                 }
             }
         }
@@ -708,19 +711,24 @@ impl Widget for &Editor {
                     let visible_chars = self.code.char_slice(char_slice_start, char_slice_end);
 
                     let draw_y = area.top() + (line_idx - self.offset_y) as u16;
-                    let mut visual_x = 0;
+                    let mut visual_x: u16 = 0;
                     let mut char_col = start_col;
 
-                    for ch in visible_chars.chars() {
-                        if char_col >= rel_start && char_col < rel_end {
-                            let draw_x = area.left() + line_number_width as u16 + visual_x;
-                            if draw_x < area.right() && draw_y < area.bottom() {
-                                buf[(draw_x, draw_y)].set_bg(color);
+                    for g in RopeGraphemes::new(&visible_chars) {
+                        let (g_width, g_chars) = grapheme_width_and_chars_len(g);
+                    
+                        if char_col < rel_end && char_col + g_chars > rel_start {
+                            let start_x = area.left() + line_number_width as u16 + visual_x;
+                            for dx in 0..g_width as u16 {
+                                let draw_x = start_x + dx;
+                                if draw_x < area.right() && draw_y < area.bottom() {
+                                    buf[(draw_x, draw_y)].set_bg(color);
+                                }
                             }
                         }
-
-                        visual_x += UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
-                        char_col += 1;
+                    
+                        visual_x = visual_x.saturating_add(g_width as u16);
+                        char_col += g_chars;
                     }
                 }
             }
