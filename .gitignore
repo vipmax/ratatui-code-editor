@@ -3,5 +3,5 @@ test.rs
 test/
 .DS_Store
 Cargo.toml
-idea
+.idea
 flamegraph.svg

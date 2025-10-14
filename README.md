@@ -11,18 +11,18 @@ A code editor widget for [Ratatui](https://github.com/ratatui/ratatui), built wi
 
 - 🎨 **Syntax Highlighting** - Powered by Tree-sitter with support for multiple languages
 - 📝 **Text Editing** - Full text editing capabilities with cursor movement
-- 🖱️ **Mouse Support** - Click to position cursor, drag to select text, words and lines snapping supported
+- 🖱️ **Mouse Support** - Mouse clicks, scroll, text selection, words and lines snapping supported
 - 📋 **Copy/Paste** - Clipboard integration with system clipboard
 - 🔄 **Undo/Redo** - Full history management for edit operations
 - 🎯 **Text Selection** - Visual text selection with keyboard and mouse
 - 🌈 **Themes** - Customizable color themes for syntax highlighting
 - 📱 **Responsive** - Adapts to terminal window size changes
-- 🔖 **Visual Highlight Marks** - Highlight specific regions in the editor
+- 🔖 **Visual Marks** - Mark specific regions in the editor
 - 🧩 **Emoji/Unicode Aware** - Correct widths, cursor, and selection for grapheme clusters (e.g., ❤️)
 
 ## Syntax Highlighting: Fast, Cached, and Wide-Row Ready
 
-The Ratatui Code Editor features blazing fast syntax highlighting powered by [Tree-sitter](https://tree-sitter.github.io/). Tree-sitter parses your code in real time, enabling accurate and context-aware highlighting for all supported languages.
+The Ratatui Code Editor features blazing fast syntax highlighting powered by [Tree-sitter](https://tree-sitter.github.io/). Tree-sitter incrementally parses your code in real time, enabling blazing fast,  accurate and context-aware highlighting for all supported languages.
 
 **Performance Features:**
 - **Super Fast:** Only the visible portion of the code is highlighted on each render, making even large files feel snappy.
@@ -118,7 +118,7 @@ fn main() -> anyhow::Result<()> {
 
 Run the included examples to see the editor in action:
 
-```bash
+```shell
 # Minimal editor example
 cargo run --release --example minimal
 
@@ -198,7 +198,7 @@ The editor is built with several key components:
 - `ropey` - Efficient text buffer
 - `crossterm` - Cross-platform terminal manipulation
 - `arboard` - Clipboard access
-- `unicode-width` - Unicode text width calculation
+- `unicode-width`, `unicode-segmentation` - Unicode text width calculation
 
 ## Contributing
 

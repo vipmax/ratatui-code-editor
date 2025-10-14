@@ -6,3 +6,4 @@ pub mod theme;
 pub mod utils;
 pub mod click;
 pub mod actions;
+pub mod render;
