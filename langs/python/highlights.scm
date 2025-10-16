@@ -1,3 +1,14 @@
+; Variables
+
+((identifier) @constant
+ (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
+
+((identifier) @type
+ (#match? @type "^[A-Z]"))
+
+(attribute attribute: (identifier) @variable.other.member)
+(identifier) @variable
+
 ; Imports
 
 (dotted_name
@@ -19,7 +30,7 @@
 [
   "def"
   "lambda"
-] @keyword.function
+] @keyword
 
 (call
   function: (attribute attribute: (identifier) @constructor)
@@ -53,8 +64,8 @@
 
 ; Parameters
 
-((identifier) @variable.builtin
- (#match? @variable.builtin "^(self|cls)$"))
+((identifier) @variable
+ (#match? @variable "^(self|cls)$"))
 
 (parameters (identifier) @variable.parameter)
 (parameters (typed_parameter (identifier) @variable.parameter))
@@ -91,16 +102,7 @@
 (class_definition name: (identifier) @type)
 (class_definition superclasses: (argument_list (identifier) @type))
 
-; Variables
 
-((identifier) @constant
- (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
-
-((identifier) @type
- (#match? @type "^[A-Z]"))
-
-(attribute attribute: (identifier) @variable.other.member)
-(identifier) @variable
 
 ; Literals
 (none) @constant.builtin
@@ -160,9 +162,8 @@
   "await"
   "from"
   "pass"
-
   "with"
-] @keyword.control
+] @keyword
 
 [
   "if"
@@ -170,32 +171,33 @@
   "else"
   "match"
   "case"
-] @keyword.control.conditional
+] @keyword
 
 [
   "while"
   "for"
   "break"
   "continue"
-] @keyword.control.repeat
+] @keyword
 
 [
   "return"
   "yield"
-] @keyword.control.return
-(yield "from" @keyword.control.return)
+] @keyword
+(yield "from" @keyword)
 
 [
   "raise"
   "try"
   "except"
   "finally"
-] @keyword.control.except
-(raise_statement "from" @keyword.control.except)
-"import" @keyword.control.import
+] @keyword
 
-(for_statement "in" @keyword.control)
-(for_in_clause "in" @keyword.control)
+(raise_statement "from" @keyword)
+"import" @keyword
+
+(for_statement "in" @keyword)
+(for_in_clause "in" @keyword)
 
 [
   "and"
@@ -205,6 +207,7 @@
   "global"
   "nonlocal"
   "print"
+
 ] @keyword
 [
   "and"
@@ -213,7 +216,7 @@
   "not"
   "del"
   "is"
-] @keyword.operator
+] @keyword
 
 ((identifier) @type.builtin
   (#match? @type.builtin
