@@ -84,3 +84,23 @@ pub fn rgb(hex: &str) -> (u8, u8, u8) {
     let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
     (r, g, b)
 }
+
+/// Calculate end position by walking through the text
+/// Returns (end_row, end_col) starting from (start_row, start_col)
+pub fn calculate_end_position(
+    start_row: usize, start_col: usize, text: &str
+) -> (usize, usize) {
+    let mut end_row = start_row;
+    let mut end_col = start_col;
+    
+    for ch in text.chars() {
+        if ch == '\n' {
+            end_row += 1;
+            end_col = 0;
+        } else {
+            end_col += 1;
+        }
+    }
+    
+    (end_row, end_col)
+}

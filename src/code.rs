@@ -7,7 +7,7 @@ use crate::history::{History};
 use crate::selection::Selection;
 use rust_embed::RustEmbed;
 use std::collections::HashMap;
-use crate::utils::{indent, count_indent_units, comment as lang_comment};
+use crate::utils::{indent, count_indent_units, comment as lang_comment, calculate_end_position};
 use std::cell::RefCell;
 use std::rc::Rc;
 use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
@@ -66,6 +66,7 @@ pub struct Code {
     current_batch: EditBatch,
     injection_parsers: Option<HashMap<String, Rc<RefCell<Parser>>>>,
     injection_queries: Option<HashMap<String, Query>>,
+    change_callback: Option<Box<dyn Fn(Vec<(usize, usize, usize, usize, String)>)>>,
 }
 
 impl Code {
@@ -94,6 +95,7 @@ impl Code {
             current_batch: EditBatch::new(),
             injection_parsers,
             injection_queries,
+            change_callback: None,
         })
     }
     
@@ -245,6 +247,7 @@ impl Code {
 
     pub fn commit(&mut self) {
         if !self.current_batch.edits.is_empty() {
+            self.notify_changes(&self.current_batch.edits);
             self.history.push(self.current_batch.clone());
             self.current_batch = EditBatch::new();
         }
@@ -631,6 +634,37 @@ impl Code {
         self.insert(offset, &to_insert);
         to_insert.chars().count()
     }
+
+    /// Set the change callback function for handling document changes
+    pub fn set_change_callback(&mut self, callback: Box<dyn Fn(Vec<(usize, usize, usize, usize, String)>)>) {
+        self.change_callback = Some(callback);
+    }
+
+    /// Notify about document changes
+    fn notify_changes(&self, edits: &[Edit]) {
+        if let Some(callback) = &self.change_callback {
+            let mut changes = Vec::new();
+            
+            for edit in edits {
+                match &edit.kind {
+                    EditKind::Insert { offset, text } => {
+                        let (start_row, start_col) = self.point(*offset);
+                        changes.push((start_row, start_col, start_row, start_col, text.clone()));
+                    }
+                    EditKind::Remove { offset, text } => {
+                        let (start_row, start_col) = self.point(*offset);
+                        let (end_row, end_col) = calculate_end_position(start_row, start_col, text);
+                        changes.push((start_row, start_col, end_row, end_col, String::new()));
+                    }
+                }
+            }
+            
+            if !changes.is_empty() {
+                callback(changes);
+            }
+        }
+    }
+    
 }
 
 /// An iterator over byte slices of Rope chunks.

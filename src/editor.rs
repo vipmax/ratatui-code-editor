@@ -480,6 +480,13 @@ impl Editor {
         &self.code
     }
 
+    /// Set the change callback function for handling document changes
+    pub fn set_change_callback(
+        &mut self, callback: Box<dyn Fn(Vec<(usize, usize, usize, usize, String)>)>
+    ) {
+        self.code.set_change_callback(callback);
+    }
+
     pub fn highlight_interval(
         &self, start: usize, end: usize, theme: &Theme
     ) -> Vec<(usize, usize, Style)> {

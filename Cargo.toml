@@ -26,6 +26,9 @@ path = "examples/split.rs"
 [[example]]
 name = "marks"
 path = "examples/marks.rs"
+[[example]]
+name = "lsp"
+path = "examples/lsp.rs"
 
 [profile.release]
 codegen-units = 1
