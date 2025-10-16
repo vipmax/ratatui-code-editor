@@ -9,7 +9,7 @@ readme = "README.md"
 homepage = "https://github.com/vipmax/ratatui-code-editor"
 repository = "https://github.com/vipmax/ratatui-code-editor.git"
 keywords = ["ratatui", "terminal", "editor", "tree-sitter"]
-categories = ["ratatui", "tui", "editor", "tree-sitter"]
+categories = ["command-line-interface", "text-editors"]
 
 [[example]]
 name = "minimal"

@@ -58,7 +58,7 @@ Add this to your `Cargo.toml`:
 anyhow = "1.0"
 crossterm = "0.29"
 ratatui = "0.29"
-ratatui-code-editor = { git = "https://github.com/vipmax/ratatui-code-editor" }
+ratatui-code-editor = "0.0.1"
 ```
 
 ### Basic Usage
