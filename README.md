@@ -85,7 +85,7 @@ fn main() -> anyhow::Result<()> {
     let mut terminal = Terminal::new(backend)?;
     
     let content = "fn main() {\n    println!(\"Hello, world!\");\n}";
-    let mut editor = Editor::new("rust", content, vesper());
+    let mut editor = Editor::new("rust", content, vesper())?;
     let mut editor_area = ratatui::layout::Rect::default();
     
     loop {
