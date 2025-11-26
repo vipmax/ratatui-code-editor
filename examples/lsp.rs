@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
     
     let filename = String::from("test.rs");
     let content = "fn main() {\n    println!(\"Hello, world!\");\n}";
-    let mut editor = Editor::new("rust", content, vesper());
+    let mut editor = Editor::new("rust", content, vesper())?;
     let mut editor_area = ratatui::layout::Rect::default();
 
     editor.set_change_callback(Box::new(

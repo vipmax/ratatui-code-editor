@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
     
     let theme = vesper();
 
-    let mut editor = Editor::new(&language, &content, theme);
+    let mut editor = Editor::new(&language, &content, theme)?;
 
     let mut editor_area = ratatui::layout::Rect::default(); 
 

@@ -212,4 +212,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - Built on top of the excellent [Ratatui](https://github.com/ratatui/ratatui) TUI framework
 - Syntax highlighting powered by [Tree-sitter](https://tree-sitter.github.io/)
+- Fast and efficient text buffer [Ropey](https://github.com/cessen/ropey)
 - Awesome list of ratatui crates and applications [awesome-ratatui](https://github.com/ratatui/awesome-ratatui)

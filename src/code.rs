@@ -67,38 +67,48 @@ pub struct Code {
     injection_parsers: Option<HashMap<String, Rc<RefCell<Parser>>>>,
     injection_queries: Option<HashMap<String, Query>>,
     change_callback: Option<Box<dyn Fn(Vec<(usize, usize, usize, usize, String)>)>>,
+    custom_highlights: Option<HashMap<String, String>>,
 }
 
 impl Code {
     /// Create a new `Code` instance with the given text and language.
-    pub fn new(text: &str, lang: &str) -> Result<Self> {
-        let (tree, parser, query, injection_parsers, injection_queries) = 
-            match Self::get_language(lang) {
-                Some(language) => {
-                    let highlights = Self::get_highlights(lang)?;
-                    let mut parser = Parser::new();
-                    parser.set_language(&language)?;
-                    let tree = parser.parse(text, None);
-                    let query = Query::new(&language, &highlights)?;
-                    let (iparsers, iqueries) = Self::init_injections(&query)?;
-                    (tree, Some(parser), Some(query), Some(iparsers), Some(iqueries))
-                }
-                None => (None, None, None, None, None),
-            };
-        
-        Ok(Self {
+    pub fn new(
+        text: &str,
+        lang: &str,
+        custom_highlights: Option<HashMap<String, String>>,
+    ) -> Result<Self> {
+        let mut code = Self {
             content: Rope::from_str(text),
             lang: lang.to_string(),
-            tree, parser, query,
+            tree: None,
+            parser: None,
+            query: None,
             applying_history: true,
             history: History::new(1000),
             current_batch: EditBatch::new(),
-            injection_parsers,
-            injection_queries,
+            injection_parsers: None,
+            injection_queries: None,
             change_callback: None,
-        })
+            custom_highlights,
+        };
+
+        if let Some(language) = Self::get_language(lang) {
+            let highlights = code.get_highlights(lang)?;
+            let mut parser = Parser::new();
+            parser.set_language(&language)?;
+            let tree = parser.parse(text, None);
+            let query = Query::new(&language, &highlights)?;
+            let (iparsers, iqueries) = code.init_injections(&query)?;
+            code.tree = tree;
+            code.parser = Some(parser);
+            code.query = Some(query);
+            code.injection_parsers = Some(iparsers);
+            code.injection_queries = Some(iqueries);
+        }
+
+        Ok(code)
     }
-    
+
     fn get_language(lang: &str) -> Option<Language> {
         match lang {
             "rust" => Some(tree_sitter_rust::LANGUAGE.into()),
@@ -121,8 +131,13 @@ impl Code {
             _ => None,
         }
     }
-    
-    fn get_highlights(lang: &str) -> anyhow::Result<String> {
+
+    fn get_highlights(&self, lang: &str) -> anyhow::Result<String> {
+        if let Some(highlights_map) = &self.custom_highlights {
+            if let Some(highlights) = highlights_map.get(lang) {
+                return Ok(highlights.clone());
+            }
+        }
         let p = format!("langs/{}/highlights.scm", lang);
         let highlights_bytes =
             LangAssets::get(&p).ok_or_else(|| anyhow!("No highlights found for {}", lang))?;
@@ -131,7 +146,10 @@ impl Code {
         Ok(highlights.to_string())
     }
 
-    fn init_injections(query: &Query) -> anyhow::Result<(
+    fn init_injections(
+        &self,
+        query: &Query,
+    ) -> anyhow::Result<(
         HashMap<String, Rc<RefCell<Parser>>>,
         HashMap<String, Query>,
     )> {
@@ -146,7 +164,7 @@ impl Code {
                 if let Some(language) = Self::get_language(lang) {
                     let mut parser = Parser::new();
                     parser.set_language(&language)?;
-                    let highlights = Self::get_highlights(lang)?;
+                    let highlights = self.get_highlights(lang)?;
                     let inj_query = Query::new(&language, &highlights)?;
 
                     injection_parsers.insert(lang.to_string(), Rc::new(RefCell::new(parser)));
@@ -803,82 +821,80 @@ pub fn grapheme_width(g: RopeSlice) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[test]
     fn test_insert() {
-        let mut code = Code::new("", "").unwrap();
+        let mut code = Code::new("", "", None).unwrap();
         code.insert(0, "Hello ");
         code.insert(6, "World");
         assert_eq!(code.content.to_string(), "Hello World");
     }
-    
+
     #[test]
     fn test_remove() {
-        let mut code = Code::new("Hello World", "").unwrap();
+        let mut code = Code::new("Hello World", "", None).unwrap();
         code.remove(5, 11);
         assert_eq!(code.content.to_string(), "Hello");
     }
-    
+
     #[test]
     fn test_undo() {
-        let mut code = Code::new("", "").unwrap();
-        
+        let mut code = Code::new("", "", None).unwrap();
+
         code.tx();
         code.insert(0, "Hello ");
         code.commit();
-        
+
         code.tx();
         code.insert(6, "World");
         code.commit();
-        
+
         code.undo();
         assert_eq!(code.content.to_string(), "Hello ");
-        
+
         code.undo();
         assert_eq!(code.content.to_string(), "");
     }
-    
+
     #[test]
     fn test_redo() {
-        let mut code = Code::new("", "").unwrap();
-        
+        let mut code = Code::new("", "", None).unwrap();
+
         code.tx();
         code.insert(0, "Hello");
         code.commit();
-        
+
         code.undo();
         assert_eq!(code.content.to_string(), "");
-        
+
         code.redo();
         assert_eq!(code.content.to_string(), "Hello");
     }
 
-
     #[test]
     fn test_indentation_level0() {
-        let mut code = Code::new("", "unknown").unwrap();
+        let mut code = Code::new("", "unknown", None).unwrap();
         code.insert(0, "    hello world");
         assert_eq!(code.indentation_level(0, 10), 0);
     }
 
     #[test]
     fn test_indentation_level() {
-        let mut code = Code::new("", "python").unwrap();
+        let mut code = Code::new("", "python", None).unwrap();
         code.insert(0, "    print('Hello, World!')");
         assert_eq!(code.indentation_level(0, 10), 1);
     }
 
     #[test]
     fn test_indentation_level2() {
-        let mut code = Code::new("", "python").unwrap();
+        let mut code = Code::new("", "python", None).unwrap();
         code.insert(0, "        print('Hello, World!')");
         assert_eq!(code.indentation_level(0, 10), 2);
     }
 
     #[test]
     fn test_is_only_indentation_before() {
-        let mut code = Code::new("", "python").unwrap();
+        let mut code = Code::new("", "python", None).unwrap();
         code.insert(0, "    print('Hello, World!')");
         assert_eq!(code.is_only_indentation_before(0, 4), true);
         assert_eq!(code.is_only_indentation_before(0, 10), false);
@@ -886,7 +902,7 @@ mod tests {
 
     #[test]
     fn test_is_only_indentation_before2() {
-        let mut code = Code::new("", "").unwrap();
+        let mut code = Code::new("", "", None).unwrap();
         code.insert(0, "    Hello, World");
         assert_eq!(code.is_only_indentation_before(0, 4), false);
         assert_eq!(code.is_only_indentation_before(0, 10), false);
@@ -895,26 +911,28 @@ mod tests {
     #[test]
     fn test_smart_paste_1() {
         let initial = "fn foo() {\n    let x = 1;\n    \n}";
-        let mut code = Code::new(initial, "rust").unwrap();
+        let mut code = Code::new(initial, "rust", None).unwrap();
 
         let offset = 30;
         let paste = "if start == end && start == self.code.len() {\n    return;\n}";
         code.smart_paste(offset, paste);
 
-        let expected = "fn foo() {\n    let x = 1;\n    if start == end && start == self.code.len() {\n        return;\n    }\n}";
+        let expected =
+            "fn foo() {\n    let x = 1;\n    if start == end && start == self.code.len() {\n        return;\n    }\n}";
         assert_eq!(code.get_content(), expected);
     }
 
     #[test]
     fn test_smart_paste_2() {
         let initial = "fn foo() {\n    let x = 1;\n    \n}";
-        let mut code = Code::new(initial, "rust").unwrap();
+        let mut code = Code::new(initial, "rust", None).unwrap();
 
         let offset = 30;
         let paste = "    if start == end && start == self.code.len() {\n        return;\n    }";
         code.smart_paste(offset, paste);
 
-        let expected = "fn foo() {\n    let x = 1;\n    if start == end && start == self.code.len() {\n        return;\n    }\n}";
+        let expected =
+            "fn foo() {\n    let x = 1;\n    if start == end && start == self.code.len() {\n        return;\n    }\n}";
         assert_eq!(code.get_content(), expected);
     }
 }

@@ -62,16 +62,23 @@ pub struct Editor {
 }
 
 impl Editor {
-    /// Create a new editor instance with language, text, and theme
-    pub fn new(lang: &str, text: &str, theme: Vec<(&str, &str)>) -> Self {
-        let code = Code::new(text, lang)
-            .or_else(|_| Code::new(text, "text"))
-            .unwrap();
+    pub fn new(lang: &str, text: &str, theme: Vec<(&str, &str)>) -> Result<Self> {
+        Self::new_with_highlights(lang, text, theme, None)
+    }
+
+    pub fn new_with_highlights(
+        lang: &str,
+        text: &str,
+        theme: Vec<(&str, &str)>,
+        custom_highlights: Option<HashMap<String, String>>,
+    ) -> Result<Self> {
+        let code = Code::new(text, lang, custom_highlights.clone())
+            .or_else(|_| Code::new(text, "text", custom_highlights))?;
 
         let theme = Self::build_theme(&theme);
         let highlights_cache = RefCell::new(HashMap::new());
 
-        Self {
+        Ok(Self {
             code,
             cursor: 0,
             offset_y: 0,
@@ -83,7 +90,7 @@ impl Editor {
             clipboard: None,
             marks: None,
             highlights_cache,
-        }
+        })
     }
 
     pub fn input(

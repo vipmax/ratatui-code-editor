@@ -33,8 +33,8 @@ fn main() -> anyhow::Result<()> {
     
     let theme = vesper();
 
-    let mut editor1 = Editor::new(&language, &content1, theme.clone());
-    let mut editor2 = Editor::new(&language, &content2, theme);
+    let mut editor1 = Editor::new(&language, &content1, theme.clone())?;
+    let mut editor2 = Editor::new(&language, &content2, theme)?;
 
     let mut editor1_area = ratatui::layout::Rect::default(); 
     let mut editor2_area = ratatui::layout::Rect::default(); 
