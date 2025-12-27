@@ -39,7 +39,7 @@ strip = true
 [dependencies]
 anyhow = "1.0"
 crossterm = "0.29"
-ratatui = "0.29"
+ratatui = { version = "0.30.0" ,features = ["unstable-widget-ref"]}
 ropey = "1.6"
 rust-embed = { version = "8.7", features = ["include-exclude"] }
 streaming-iterator = "0.1"
