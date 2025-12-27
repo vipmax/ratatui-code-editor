@@ -10,6 +10,7 @@ use ratatui::{Terminal, backend::CrosstermBackend, layout::Position};
 use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::theme::vesper;
 use std::io::stdout;
+use ratatui::widgets::FrameExt;
 
 fn main() -> anyhow::Result<()> {
     enable_raw_mode()?;
@@ -33,7 +34,7 @@ fn main() -> anyhow::Result<()> {
         terminal.draw(|f| {
             let area = f.area();
             editor_area = area;
-            f.render_widget(&editor, editor_area);
+            f.render_widget_ref(&editor, editor_area);
             
             let cursor = editor.get_visible_cursor(&editor_area);
             if let Some((x,y)) = cursor {

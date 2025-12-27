@@ -15,7 +15,7 @@ use ratatui::widgets::{Block, Borders};
 use std::io::stdout;
 use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::theme::vesper;
-
+use ratatui::widgets::FrameExt;
 fn main() -> anyhow::Result<()> {
     let filename = "src/code.rs";
     let language = "rust";
@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<()> {
             let inner = block.inner(chunks[0]);
             editor_area = inner;
             f.render_widget(block, chunks[0]);
-            f.render_widget(&editor, editor_area);
+            f.render_widget_ref(&editor, editor_area);
             
             let cursor = editor.get_visible_cursor(&editor_area);
             if let Some((x,y)) = cursor {

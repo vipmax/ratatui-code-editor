@@ -14,7 +14,7 @@ use std::io::stdout;
 use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::theme::vesper;
 use ratatui_code_editor::utils::get_lang;
-
+use ratatui::widgets::FrameExt;
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     
@@ -45,7 +45,7 @@ fn main() -> anyhow::Result<()> {
         terminal.draw(|f| {
             let area = f.area();
             editor_area = area;
-            f.render_widget(&editor, area);
+            f.render_widget_ref(&editor, area);
             
             let cursor = editor.get_visible_cursor(&area);
             if let Some((x,y)) = cursor {
