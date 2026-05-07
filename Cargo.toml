@@ -19,6 +19,9 @@ path = "examples/minimal.rs"
 name = "editor"
 path = "examples/editor.rs"
 [[example]]
+name = "editor_nl"
+path = "examples/editor_nl.rs"
+[[example]]
 name = "half"
 path = "examples/half.rs"
 [[example]]
