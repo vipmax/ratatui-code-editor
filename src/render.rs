@@ -24,11 +24,12 @@ use crate::code::{
 impl Widget for &Editor {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let code = self.code_ref();
-        let total_lines = code.len_lines();
         let total_chars = code.len_chars();
+
+        let total_lines = code.len_lines();
         let max_line_number = total_lines.max(1);
         let line_number_digits = max_line_number.to_string().len().max(5);
-        let line_number_width = line_number_digits + 2;
+        let line_number_width = self.get_line_number_width();
 
         let mut draw_y = area.top();
         
@@ -38,10 +39,10 @@ impl Widget for &Editor {
         // draw line numbers and text
         for line_idx in self.offset_y..total_lines {
             if draw_y >= area.bottom() { break }
-        
-            let line_number = format!("{:>width$}", line_idx + 1, width = line_number_digits);
-            buf.set_string(area.left(), draw_y, &line_number, line_number_style);
-        
+            if self.show_line_numbers {
+                let line_number = format!("{:>width$}", line_idx + 1, width = line_number_digits);
+                buf.set_string(area.left(), draw_y, &line_number, line_number_style);
+            }
             let line_len = code.line_len(line_idx);
             let max_x = (area.width as usize).saturating_sub(line_number_width);
         

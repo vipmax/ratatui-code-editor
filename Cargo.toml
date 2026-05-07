@@ -23,6 +23,9 @@ keywords = ["ratatui", "terminal", "editor", "tree-sitter"]
 categories = ["command-line-interface", "text-editors"]
 exclude = [".anycode/*", "Cargo.toml.orig"]
 
+[[example]]
+name = "editor_nl"
+path = "examples/editor_nl.rs"
 [profile.release]
 codegen-units = 1
 lto = true

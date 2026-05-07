@@ -54,6 +54,12 @@ pub struct Editor {
 
     /// Syntax highlight cache by intervals to speed up rendering
     pub(crate) highlights_cache: RefCell<HightlightCache>,
+
+    /// Controls when to show the line numbers
+    pub(crate) show_line_numbers: bool,
+
+    /// Controls the left padding before writing the code
+    pub(crate) left_code_padding: usize,
 }
 
 impl Editor {
@@ -85,16 +91,60 @@ impl Editor {
             clipboard: None,
             marks: None,
             highlights_cache,
+            show_line_numbers: true,
+            left_code_padding: 2,
         })
+    }
+
+    pub(crate) fn get_line_number_width(&self) -> usize {
+        if self.show_line_numbers {
+            let total_lines = self.code.len_lines();
+            let max_line_number = total_lines.max(1);
+            let line_number_digits = max_line_number.to_string().len().max(5);
+            (line_number_digits + self.left_code_padding) as usize
+        } else {
+            self.left_code_padding
+        }
+    } 
+
+    pub fn input(
+        &mut self, key: KeyEvent, area: &Rect,
+    ) -> Result<()> {
+        use crossterm::event::KeyCode;
+
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let _alt = key.modifiers.contains(KeyModifiers::ALT);
+
+        match key.code {
+            KeyCode::Char('÷') => self.apply(ToggleComment { }),
+            KeyCode::Char('z') if ctrl => self.apply(Undo { }),
+            KeyCode::Char('y') if ctrl => self.apply(Redo { }),
+            KeyCode::Char('c') if ctrl => self.apply(Copy { }),
+            KeyCode::Char('v') if ctrl => self.apply(Paste { }),
+            KeyCode::Char('x') if ctrl => self.apply(Cut { }),
+            KeyCode::Char('k') if ctrl => self.apply(DeleteLine { }),
+            KeyCode::Char('d') if ctrl => self.apply(Duplicate { }),
+            KeyCode::Char('a') if ctrl => self.apply(SelectAll { }),
+            KeyCode::Left      => self.apply(MoveLeft { shift }),
+            KeyCode::Right     => self.apply(MoveRight { shift }),
+            KeyCode::Up        => self.apply(MoveUp { shift }),
+            KeyCode::Down      => self.apply(MoveDown { shift }),
+            KeyCode::Backspace => self.apply(Delete { }),
+            KeyCode::Enter     => self.apply(InsertNewline { }),
+            KeyCode::Char(c)   => self.apply(InsertText { text: c.to_string() }),
+            KeyCode::Tab       => self.apply(Indent { }),
+            KeyCode::BackTab   => self.apply(UnIndent { }),
+            _ => {}
+        }
+        self.focus(&area);
+        Ok(())
     }
 
     pub fn focus(&mut self, area: &Rect) {
         let width = area.width as usize;
         let height = area.height as usize;
-        let total_lines = self.code.len_lines();
-        let max_line_number = total_lines.max(1);
-        let line_number_digits = max_line_number.to_string().len().max(5);
-        let line_number_width = (line_number_digits + 2) as usize;
+        let line_number_width = self.get_line_number_width();
 
         let line = self.code.char_to_line(self.cursor);
         let col = self.cursor - self.code.line_to_char(line);
@@ -177,10 +227,7 @@ impl Editor {
     pub fn cursor_from_mouse(
         &self, mouse_x: u16, mouse_y: u16, area: &Rect
     ) -> Option<usize> {
-        let total_lines = self.code.len_lines();
-        let max_line_number = total_lines.max(1);
-        let line_number_digits = max_line_number.to_string().len().max(5);
-        let line_number_width = (line_number_digits + 2) as u16;
+        let line_number_width = self.get_line_number_width() as u16;
     
         if mouse_y < area.top()
             || mouse_y >= area.bottom()
@@ -446,10 +493,7 @@ impl Editor {
     pub fn get_visible_cursor(
         &self, area: &Rect
     ) -> Option<(u16, u16)> {
-        let total_lines = self.code.len_lines();
-        let max_line_number = total_lines.max(1);
-        let line_number_digits = max_line_number.to_string().len().max(5);
-        let line_number_width = line_number_digits + 2;
+        let line_number_width = self.get_line_number_width();
 
         let (cursor_line, cursor_char_col) = self.code.point(self.cursor);
         
@@ -482,5 +526,13 @@ impl Editor {
         }
         
         return None;
+    }
+
+    pub fn show_line_numbers(&mut self, show: bool) {
+        self.show_line_numbers = show
+    }
+
+    pub fn set_left_code_padding(&mut self, char_count: usize) {
+        self.left_code_padding = char_count
     }
 }
