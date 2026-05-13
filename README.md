@@ -58,7 +58,7 @@ Add this to your `Cargo.toml`:
 anyhow = "1.0"
 crossterm = "0.29"
 ratatui = "0.30" # needed by your app terminal setup
-ratatui-code-editor = { version = "0.1", features = ["crossterm"] }
+ratatui-code-editor = { version = "0.0.4", features = ["crossterm"] }
 ```
 
 ### Basic Usage

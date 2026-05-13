@@ -12,7 +12,7 @@ members = [
 
 [package]
 name = "ratatui-code-editor"
-version = "0.1.0"
+version = "0.0.4"
 edition = "2024"
 authors = ["vipmax"]
 description = "ratatui-code-editor is A code editor widget for ratatui, built with syntax highlighting powered by Tree-sitter."
