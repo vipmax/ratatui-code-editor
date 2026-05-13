@@ -66,6 +66,9 @@ tree-sitter-toml-ng = "~0.7.0"
 tree-sitter-bash = "~0.25.0"
 tree-sitter-md = "~0.5.1"
 
+[dev-dependencies]
+ratatui = { workspace = true }
+
 [features]
 default = ["crossterm"]
 crossterm = [
