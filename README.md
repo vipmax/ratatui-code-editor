@@ -57,8 +57,8 @@ Add this to your `Cargo.toml`:
 ```toml
 anyhow = "1.0"
 crossterm = "0.29"
-ratatui = "0.30"
-ratatui-code-editor = "0.0.2"
+ratatui = "0.30" # needed by your app terminal setup
+ratatui-code-editor = { version = "0.1", features = ["crossterm"] }
 ```
 
 ### Basic Usage
@@ -72,7 +72,7 @@ use crossterm::{
         EnterAlternateScreen, LeaveAlternateScreen
     },
 };
-use ratatui::{Terminal, backend::CrosstermBackend, layout::Position};
+use ratatui::{Terminal, backend::CrosstermBackend, layout::{Position, Rect}};
 use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::theme::vesper;
 use std::io::stdout;
@@ -86,7 +86,7 @@ fn main() -> anyhow::Result<()> {
     
     let content = "fn main() {\n    println!(\"Hello, world!\");\n}";
     let mut editor = Editor::new("rust", content, vesper())?;
-    let mut editor_area = ratatui::layout::Rect::default();
+    let mut editor_area = Rect::default();
     
     loop {
         terminal.draw(|f| {
@@ -120,16 +120,16 @@ Run the included examples to see the editor in action:
 
 ```shell
 # Minimal editor example
-cargo run --release --example minimal
+cargo run --release -p minimal
 
 # Half-screen editor
-cargo run --release --example half
+cargo run --release -p half
 
 # Split-screen editor
-cargo run --release --example split
+cargo run --release -p split
 
 # Editor
-cargo run --release --example editor <filename>
+cargo run --release -p editor -- <filename>
 ```
 
 ## Key Bindings
@@ -193,10 +193,10 @@ The editor is built with several key components:
 
 ## Dependencies
 
-- `ratatui` - Terminal UI framework
+- `ratatui-core` - Core terminal UI primitives used by the editor widget
 - `tree-sitter` - Syntax highlighting parser
 - `ropey` - Efficient text buffer
-- `crossterm` - Cross-platform terminal manipulation
+- `crossterm` - Optional input backend (enable `crossterm` feature)
 - `arboard` - Clipboard access
 - `unicode-width`, `unicode-segmentation` - Unicode text width calculation
 
