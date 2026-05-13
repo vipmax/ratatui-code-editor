@@ -5,10 +5,10 @@ pub enum SelectionSnap {
     Line { anchor: usize },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection {
-    pub start: usize, 
-    pub end: usize,  
+    pub start: usize,
+    pub end: usize,
 }
 
 impl Selection {
@@ -18,19 +18,25 @@ impl Selection {
             end: a.max(b),
         }
     }
-    
+
     pub fn from_anchor_and_cursor(anchor: usize, cursor: usize) -> Self {
         if anchor <= cursor {
-            Selection { start: anchor, end: cursor }
+            Selection {
+                start: anchor,
+                end: cursor,
+            }
         } else {
-            Selection { start: cursor, end: anchor }
+            Selection {
+                start: cursor,
+                end: anchor,
+            }
         }
     }
 
     pub fn is_active(&self) -> bool {
         self.start != self.end
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.start.max(self.end) == self.start.min(self.end)
     }
@@ -38,7 +44,7 @@ impl Selection {
     pub fn contains(&self, index: usize) -> bool {
         index >= self.start && index < self.end
     }
-    
+
     pub fn sorted(&self) -> (usize, usize) {
         if self.start <= self.end {
             (self.start, self.end)

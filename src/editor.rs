@@ -1,7 +1,7 @@
 use std::time::Duration;
 use crate::click::{ClickKind, ClickTracker};
 use crate::code::Code;
-use crate::code::{EditKind, EditBatch};
+use crate::code::{EditBatch, Operation};
 use crate::code::{RopeGraphemes, grapheme_width_and_chars_len, grapheme_width};
 use crate::selection::{Selection, SelectionSnap};
 use crate::actions::*;
@@ -288,12 +288,12 @@ impl Editor {
         }
         
         for edit in &batch.edits {
-            match &edit.kind {
-                EditKind::Insert { offset, text } => {
-                    self.code.insert(*offset, text);
+            match edit.operation {
+                Operation::Insert => {
+                    self.code.insert(edit.start, &edit.text);
                 }
-                EditKind::Remove { offset, text } => {
-                    self.code.remove(*offset, *offset + text.chars().count());
+                Operation::Remove => {
+                    self.code.remove(edit.start, edit.start + edit.text.chars().count());
                 }
             }
         }
