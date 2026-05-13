@@ -349,6 +349,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor_nl"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "ratatui",
+ "ratatui-code-editor",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1124,6 +1134,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "crossterm",
+ "ratatui",
  "ratatui-core",
  "ropey",
  "rust-embed",
