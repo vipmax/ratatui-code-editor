@@ -3,6 +3,7 @@ pub mod editor;
 pub mod editor_crossterm;
 pub mod code;
 pub mod history;
+mod view;
 pub mod selection;
 pub mod theme;
 pub mod utils;

@@ -95,16 +95,8 @@ impl Action for MoveUp {
         let code = editor.code_ref();
         let (row, col) = code.point(cursor);
 
-        let prev_row = if editor.is_diff_focus_active() {
-            let Some(prev_row) = editor.previous_focus_real_line(row) else {
-                return;
-            };
-            prev_row
-        } else {
-            let Some(prev_row) = row.checked_sub(1) else {
-                return;
-            };
-            prev_row
+        let Some(prev_row) = editor.prev_line(row) else {
+            return;
         };
 
         let current_visual_col = code.char_col_to_visual(row, col);
@@ -142,17 +134,8 @@ impl Action for MoveDown {
         let cursor = editor.get_cursor();
         let code = editor.code_ref();
         let (row, col) = code.point(cursor);
-        let next_row = if editor.is_diff_focus_active() {
-            let Some(next_row) = editor.next_focus_real_line(row) else {
-                return;
-            };
-            next_row
-        } else {
-            let is_last_line = row + 1 >= code.len_lines();
-            if is_last_line {
-                return;
-            }
-            row + 1
+        let Some(next_row) = editor.next_line(row) else {
+            return;
         };
 
         let current_visual_col = code.char_col_to_visual(row, col);

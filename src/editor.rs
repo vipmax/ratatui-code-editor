@@ -6,10 +6,10 @@ use crate::code::{RopeGraphemes, grapheme_width, grapheme_width_and_chars_len};
 use crate::selection::{Selection, SelectionSnap};
 use crate::types::{HightlightCache, Theme, VisualRow};
 use crate::utils;
+use crate::view::{View, ViewMode};
 use anyhow::{Result, anyhow};
 use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Style};
-use similar::{ChangeTag, TextDiff};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -57,11 +57,8 @@ pub struct Editor {
     /// Controls the left padding before writing the code
     pub(crate) left_code_padding: usize,
 
-    /// Runtime toggle for diff rendering and visual rows.
-    pub(crate) diff_enabled: bool,
-
-    /// Runtime toggle for showing only changed diff rows with surrounding context.
-    pub(crate) diff_focus_enabled: bool,
+    /// Current document-to-screen view mode.
+    pub(crate) view_mode: ViewMode,
 
     /// Number of unchanged visual rows shown around focused diff rows.
     pub(crate) diff_focus_context: usize,
@@ -69,8 +66,8 @@ pub struct Editor {
     /// Original code snapshot used for diff and ghost-line highlighting.
     pub(crate) original_code: Option<Code>,
 
-    /// Visual rows model (real + ghost deleted rows) used for stable scrolling.
-    pub(crate) visual_rows: RefCell<Vec<VisualRow>>,
+    /// Derived view rows and line mappings used for scrolling, rendering, and navigation.
+    pub(crate) view: RefCell<View>,
 }
 
 impl Editor {
@@ -104,11 +101,10 @@ impl Editor {
             highlights_cache,
             show_line_numbers: true,
             left_code_padding: 2,
-            diff_enabled: false,
-            diff_focus_enabled: false,
+            view_mode: ViewMode::Plain,
             diff_focus_context: 3,
             original_code: None,
-            visual_rows: RefCell::new(Vec::new()),
+            view: RefCell::new(View::default()),
         })
     }
 
@@ -222,7 +218,7 @@ impl Editor {
         }
 
         let clicked_visual_row = (mouse_y - area.top()) as usize + self.offset_y;
-        let clicked_row = self.real_line_for_visual_row(clicked_visual_row);
+        let clicked_row = self.line_for_visual_row(clicked_visual_row)?;
         if clicked_row >= self.code.len_lines() {
             return None;
         }
@@ -312,49 +308,67 @@ impl Editor {
             .or_else(|_| Code::new(content, "text", None))?;
         self.highlights_cache.borrow_mut().clear();
         self.original_code = Some(original);
-        self.rebuild_visual_rows();
+        self.rebuild_view();
         Ok(())
     }
 
     pub fn clear_original_code(&mut self) {
         self.highlights_cache.borrow_mut().clear();
         self.original_code = None;
-        self.visual_rows.borrow_mut().clear();
+        self.view.borrow_mut().clear();
         self.offset_y = 0;
     }
 
     pub fn has_diff(&self) -> bool {
-        self.diff_enabled && self.original_code.is_some()
+        self.view_mode.has_diff() && self.original_code.is_some()
     }
 
     pub fn set_diff_enabled(&mut self, enabled: bool) {
-        self.diff_enabled = enabled;
-        self.rebuild_visual_rows();
+        self.view_mode = if enabled {
+            match self.view_mode {
+                ViewMode::DiffFocus { .. } => self.view_mode,
+                ViewMode::Plain | ViewMode::Diff => ViewMode::Diff,
+            }
+        } else {
+            ViewMode::Plain
+        };
+        self.rebuild_view();
         self.clamp_offset_y();
     }
 
     pub fn is_diff_enabled(&self) -> bool {
-        self.diff_enabled
+        self.view_mode.has_diff()
     }
 
     pub fn set_diff_focus_enabled(&mut self, enabled: bool) {
-        self.diff_focus_enabled = enabled;
-        self.rebuild_visual_rows();
+        self.view_mode = if enabled {
+            ViewMode::DiffFocus {
+                context_lines: self.diff_focus_context,
+            }
+        } else if self.view_mode.has_diff() {
+            ViewMode::Diff
+        } else {
+            ViewMode::Plain
+        };
+        self.rebuild_view();
         self.clamp_cursor_to_focus_rows();
         self.clamp_offset_y();
     }
 
     pub fn toggle_diff_focus(&mut self) {
-        self.set_diff_focus_enabled(!self.diff_focus_enabled);
+        self.set_diff_focus_enabled(!self.view_mode.is_diff_focus());
     }
 
     pub fn is_diff_focus_enabled(&self) -> bool {
-        self.diff_focus_enabled
+        self.view_mode.is_diff_focus()
     }
 
     pub fn set_diff_focus_context(&mut self, context_lines: usize) {
         self.diff_focus_context = context_lines;
-        self.rebuild_visual_rows();
+        if self.view_mode.is_diff_focus() {
+            self.view_mode = ViewMode::DiffFocus { context_lines };
+        }
+        self.rebuild_view();
         self.clamp_cursor_to_focus_rows();
         self.clamp_offset_y();
     }
@@ -515,42 +529,26 @@ impl Editor {
     }
 
     pub(crate) fn visual_len_lines(&self) -> usize {
-        if self.has_diff() {
-            return self.visual_rows.borrow().len().max(1);
-        }
-        self.code.len_lines().max(1)
+        self.view
+            .borrow()
+            .visual_len_lines(&self.code, self.active_view_mode())
     }
 
-    pub(crate) fn real_line_for_visual_row(&self, visual_row: usize) -> usize {
-        let last = self.code.len_lines().saturating_sub(1);
-        if !self.has_diff() {
-            return visual_row.min(last);
-        }
-
-        self.visual_rows
+    pub(crate) fn line_for_visual_row(&self, visual_row: usize) -> Option<usize> {
+        self.view
             .borrow()
-            .get(visual_row)
-            .map(|row| match row {
-                VisualRow::Real { line_idx, .. } => *line_idx,
-                VisualRow::FoldSeparator { .. } => last,
-                VisualRow::GhostDeleted { anchor_line, .. } => {
-                    anchor_line.saturating_sub(1).min(last)
-                }
-            })
-            .unwrap_or(last)
+            .line_for_visual_row(&self.code, self.active_view_mode(), visual_row)
+    }
+
+    pub(crate) fn visual_row(&self, visual_row: usize) -> Option<VisualRow> {
+        self.view.borrow().rows().get(visual_row).cloned()
     }
 
     pub(crate) fn visual_line_idx(&self, line_idx: usize) -> usize {
-        if self.has_diff() {
-            let rows = self.visual_rows.borrow();
-            return rows
-                .iter()
-                .position(
-                    |row| matches!(row, VisualRow::Real { line_idx: idx, .. } if *idx == line_idx),
-                )
-                .unwrap_or(line_idx);
-        }
-        line_idx
+        self.view
+            .borrow()
+            .visual_row_for_line(self.active_view_mode(), line_idx)
+            .unwrap_or(usize::MAX)
     }
 
     pub fn code_mut(&mut self) -> &mut Code {
@@ -608,45 +606,27 @@ impl Editor {
 
     pub fn reset_highlight_cache(&self) {
         self.highlights_cache.borrow_mut().clear();
-        self.rebuild_visual_rows();
+        self.rebuild_view();
     }
 
     fn clamp_offset_y(&mut self) {
         self.offset_y = self.offset_y.min(self.visual_len_lines().saturating_sub(1));
     }
 
-    pub(crate) fn previous_focus_real_line(&self, line_idx: usize) -> Option<usize> {
-        if !self.is_diff_focus_active() {
-            return None;
-        }
-
-        self.visual_rows.borrow().iter().rev().find_map(|row| {
-            if let VisualRow::Real { line_idx: idx, .. } = row
-                && *idx < line_idx
-            {
-                return Some(*idx);
-            }
-            None
-        })
+    pub(crate) fn prev_line(&self, line_idx: usize) -> Option<usize> {
+        self.view
+            .borrow()
+            .prev_line(self.active_view_mode(), line_idx)
     }
 
-    pub(crate) fn next_focus_real_line(&self, line_idx: usize) -> Option<usize> {
-        if !self.is_diff_focus_active() {
-            return None;
-        }
-
-        self.visual_rows.borrow().iter().find_map(|row| {
-            if let VisualRow::Real { line_idx: idx, .. } = row
-                && *idx > line_idx
-            {
-                return Some(*idx);
-            }
-            None
-        })
+    pub(crate) fn next_line(&self, line_idx: usize) -> Option<usize> {
+        self.view
+            .borrow()
+            .next_line(&self.code, self.active_view_mode(), line_idx)
     }
 
     pub(crate) fn is_diff_focus_active(&self) -> bool {
-        self.has_diff() && self.diff_focus_enabled
+        self.has_diff() && self.view_mode.is_diff_focus()
     }
 
     fn clamp_cursor_to_focus_rows(&mut self) {
@@ -655,7 +635,7 @@ impl Editor {
         }
 
         let (cursor_line, cursor_char_col) = self.code.point(self.cursor);
-        if self.focus_real_line_visible(cursor_line) {
+        if self.line_visible(cursor_line) {
             return;
         }
 
@@ -674,29 +654,16 @@ impl Editor {
         self.clear_selection();
     }
 
-    fn focus_real_line_visible(&self, line_idx: usize) -> bool {
-        self.visual_rows
+    fn line_visible(&self, line_idx: usize) -> bool {
+        self.view
             .borrow()
-            .iter()
-            .any(|row| matches!(row, VisualRow::Real { line_idx: idx, .. } if *idx == line_idx))
+            .line_visible(self.active_view_mode(), line_idx)
     }
 
     fn nearest_focus_real_line(&self, line_idx: usize) -> Option<usize> {
-        let prev = self.previous_focus_real_line(line_idx);
-        let next = self.next_focus_real_line(line_idx);
-
-        match (prev, next) {
-            (Some(prev), Some(next)) => {
-                if line_idx - prev <= next - line_idx {
-                    Some(prev)
-                } else {
-                    Some(next)
-                }
-            }
-            (Some(prev), None) => Some(prev),
-            (None, Some(next)) => Some(next),
-            (None, None) => None,
-        }
+        self.view
+            .borrow()
+            .nearest_line(&self.code, self.active_view_mode(), line_idx)
     }
 
     /// calculates visible cursor position
@@ -752,137 +719,18 @@ impl Editor {
         self.left_code_padding = char_count
     }
 
-    pub(crate) fn rebuild_visual_rows(&self) {
-        if !self.diff_enabled {
-            self.visual_rows.borrow_mut().clear();
-            return;
-        }
-        let Some(original) = &self.original_code else {
-            self.visual_rows.borrow_mut().clear();
-            return;
-        };
-
-        let full_rows = self.build_diff_visual_rows(original);
-        let rows = if self.diff_focus_enabled {
-            Self::focused_diff_rows(&full_rows, self.diff_focus_context)
+    fn active_view_mode(&self) -> ViewMode {
+        if self.original_code.is_some() {
+            self.view_mode
         } else {
-            full_rows
-        };
-
-        *self.visual_rows.borrow_mut() = rows;
+            ViewMode::Plain
+        }
     }
 
-    fn build_diff_visual_rows(&self, original: &Code) -> Vec<VisualRow> {
-        let current = self.code.get_content();
-        let original_text = original.get_content();
-        let diff = TextDiff::from_lines(&original_text, &current);
-
-        let mut rows = Vec::new();
-        let mut current_line_idx = 0usize;
-        let mut original_line_idx = 0usize;
-        let mut pending_deletes: Vec<(String, usize)> = Vec::new();
-
-        for op in diff.ops() {
-            for change in diff.iter_changes(op) {
-                match change.tag() {
-                    ChangeTag::Delete => {
-                        pending_deletes.push((
-                            change.to_string().trim_end_matches('\n').to_string(),
-                            original_line_idx,
-                        ));
-                        original_line_idx += 1;
-                    }
-                    ChangeTag::Insert => {
-                        let anchor = current_line_idx + 1;
-                        for (text, orig_idx) in pending_deletes.drain(..) {
-                            rows.push(VisualRow::GhostDeleted {
-                                anchor_line: anchor,
-                                text,
-                                original_line_idx: orig_idx,
-                            });
-                        }
-                        rows.push(VisualRow::Real {
-                            line_idx: current_line_idx,
-                            is_added: true,
-                        });
-                        current_line_idx += 1;
-                    }
-                    ChangeTag::Equal => {
-                        let anchor = current_line_idx + 1;
-                        for (text, orig_idx) in pending_deletes.drain(..) {
-                            rows.push(VisualRow::GhostDeleted {
-                                anchor_line: anchor,
-                                text,
-                                original_line_idx: orig_idx,
-                            });
-                        }
-                        rows.push(VisualRow::Real {
-                            line_idx: current_line_idx,
-                            is_added: false,
-                        });
-                        current_line_idx += 1;
-                        original_line_idx += 1;
-                    }
-                }
-            }
-        }
-
-        if !pending_deletes.is_empty() {
-            let anchor = current_line_idx + 1;
-            for (text, orig_idx) in pending_deletes.drain(..) {
-                rows.push(VisualRow::GhostDeleted {
-                    anchor_line: anchor,
-                    text,
-                    original_line_idx: orig_idx,
-                });
-            }
-        }
-
-        // Keep a safe fallback mapping for unusual trailing newline cases.
-        while current_line_idx < self.code.len_lines() {
-            rows.push(VisualRow::Real {
-                line_idx: current_line_idx,
-                is_added: false,
-            });
-            current_line_idx += 1;
-        }
-
-        rows
-    }
-
-    fn focused_diff_rows(rows: &[VisualRow], context_lines: usize) -> Vec<VisualRow> {
-        let mut include = vec![false; rows.len()];
-
-        for (idx, row) in rows.iter().enumerate() {
-            if row.is_changed() {
-                let start = idx.saturating_sub(context_lines);
-                let end = (idx + context_lines + 1).min(rows.len());
-                for should_include in include.iter_mut().take(end).skip(start) {
-                    *should_include = true;
-                }
-            }
-        }
-
-        rows.iter()
-            .enumerate()
-            .filter_map(|(idx, row)| include[idx].then_some((idx, row)))
-            .fold(Vec::new(), |mut focused, (idx, row)| {
-                if let Some((prev_idx, _)) = focused.last()
-                    && idx > prev_idx + 1
-                {
-                    focused.push((
-                        idx,
-                        VisualRow::FoldSeparator {
-                            hidden_lines: idx - prev_idx - 1,
-                        },
-                    ));
-                }
-                focused.push((idx, row.clone()));
-                focused
-            })
-            .into_iter()
-            .map(|(_, row)| row)
-            .collect()
+    pub(crate) fn rebuild_view(&self) {
+        self.view
+            .borrow_mut()
+            .rebuild(&self.code, self.original_code.as_ref(), self.view_mode);
     }
 }
 
@@ -890,23 +738,19 @@ impl Editor {
 mod tests {
     use super::*;
 
-    fn real(line_idx: usize, is_added: bool) -> VisualRow {
-        VisualRow::Real { line_idx, is_added }
-    }
-
     #[test]
     fn focus_diff_focus_clamps_cursor_before_moving_viewport() {
-        let mut editor = Editor::new("text", "0\n1\n2\n3\n4\n5\n", vec![]).unwrap();
+        let mut editor = Editor::new("text", "0\n1\n2\nchanged\n4\n5\n", vec![]).unwrap();
         editor.set_diff_enabled(true);
         editor.set_original_code("0\n1\n2\n3\n4\n5\n").unwrap();
+        editor.set_diff_focus_context(0);
         editor.set_diff_focus_enabled(true);
-        *editor.visual_rows.borrow_mut() = vec![real(4, true)];
         editor.cursor = editor.code.line_to_char(1);
         editor.offset_y = 99;
 
         editor.focus(&Rect::new(0, 0, 80, 10));
 
-        assert_eq!(editor.code.point(editor.get_cursor()).0, 4);
-        assert_eq!(editor.get_offset_y(), 0);
+        assert_eq!(editor.code.point(editor.get_cursor()).0, 3);
+        assert_eq!(editor.get_offset_y(), 1);
     }
 }

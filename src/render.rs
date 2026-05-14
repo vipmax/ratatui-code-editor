@@ -55,8 +55,7 @@ impl Widget for &Editor {
             }
 
             if self.has_diff() {
-                let rows = self.visual_rows.borrow();
-                if let Some(row) = rows.get(visual_row_idx) {
+                if let Some(row) = self.visual_row(visual_row_idx) {
                     match row {
                         VisualRow::FoldSeparator { hidden_lines } => {
                             if self.show_line_numbers {
@@ -126,9 +125,8 @@ impl Widget for &Editor {
                             continue;
                         }
                         VisualRow::Real { line_idx, is_added } => {
-                            let line_idx = *line_idx;
                             if self.show_line_numbers {
-                                if *is_added {
+                                if is_added {
                                     buf.set_string(
                                         area.left(),
                                         draw_y,
@@ -158,7 +156,7 @@ impl Widget for &Editor {
                             if text_x < area.left() + area.width
                                 && draw_y < area.top() + area.height
                             {
-                                if *is_added {
+                                if is_added {
                                     let width =
                                         (area.width as usize).saturating_sub(line_number_width);
                                     let fill = " ".repeat(width);
@@ -227,12 +225,13 @@ impl Widget for &Editor {
                 if visual_line_idx >= total_visual_lines {
                     break;
                 }
-                let mut line_idx = self.real_line_for_visual_row(visual_line_idx);
+                let Some(mut line_idx) = self.line_for_visual_row(visual_line_idx) else {
+                    continue;
+                };
                 let mut use_original_code = false;
                 let mut line_is_added = false;
                 if self.has_diff() {
-                    let rows = self.visual_rows.borrow();
-                    let Some(row) = rows.get(visual_line_idx) else {
+                    let Some(row) = self.visual_row(visual_line_idx) else {
                         continue;
                     };
                     match row {
@@ -240,13 +239,13 @@ impl Widget for &Editor {
                             line_idx: idx,
                             is_added,
                         } => {
-                            line_idx = *idx;
-                            line_is_added = *is_added;
+                            line_idx = idx;
+                            line_is_added = is_added;
                         }
                         VisualRow::GhostDeleted {
                             original_line_idx, ..
                         } => {
-                            line_idx = *original_line_idx;
+                            line_idx = original_line_idx;
                             use_original_code = true;
                         }
                         VisualRow::FoldSeparator { .. } => continue,
