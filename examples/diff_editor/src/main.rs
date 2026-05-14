@@ -1,11 +1,13 @@
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use git2::Repository;
-use ratatui::{backend::CrosstermBackend, layout::Position, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend, layout::Position};
 use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::theme::vesper;
 use ratatui_code_editor::utils::get_lang;
@@ -36,7 +38,9 @@ fn main() -> Result<()> {
     if let Some(original) = read_file_from_head(filename)? {
         editor.set_original_code(&original)?;
     } else {
-        eprintln!("diff_editor: original from git HEAD not found, diff view disabled for this file");
+        eprintln!(
+            "diff_editor: original from git HEAD not found, diff view disabled for this file"
+        );
     }
 
     let mut editor_area = ratatui::layout::Rect::default();
@@ -59,6 +63,8 @@ fn main() -> Result<()> {
                         break;
                     } else if is_save_pressed(key) {
                         save_to_file(&editor.get_content(), filename)?;
+                    } else if is_focus_diff_pressed(key) {
+                        editor.toggle_diff_focus();
                     } else {
                         editor.input(key, &editor_area)?;
                     }
@@ -73,7 +79,11 @@ fn main() -> Result<()> {
     }
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     Ok(())
 }
 
@@ -88,7 +98,9 @@ fn read_file_from_head(path: &str) -> Result<Option<String>> {
         let tree = commit.tree()?;
         let entry = tree.get_path(rel_path)?;
         let object = entry.to_object(&repo)?;
-        let blob = object.as_blob().ok_or_else(|| anyhow::anyhow!("not a blob"))?;
+        let blob = object
+            .as_blob()
+            .ok_or_else(|| anyhow::anyhow!("not a blob"))?;
         let text = std::str::from_utf8(blob.content())?.to_string();
         Ok(text)
     };
@@ -106,4 +118,8 @@ fn save_to_file(content: &str, path: &str) -> Result<()> {
 
 fn is_save_pressed(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s')
+}
+
+fn is_focus_diff_pressed(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('f')
 }

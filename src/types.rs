@@ -10,10 +10,26 @@ pub(crate) type HightlightCache = HashMap<(u8, usize, usize), Vec<Hightlight>>;
 
 #[derive(Clone)]
 pub(crate) enum VisualRow {
-    Real { line_idx: usize, is_added: bool },
+    Real {
+        line_idx: usize,
+        is_added: bool,
+    },
+    FoldSeparator {
+        hidden_lines: usize,
+    },
     GhostDeleted {
         anchor_line: usize,
         text: String,
         original_line_idx: usize,
     },
+}
+
+impl VisualRow {
+    pub(crate) fn is_changed(&self) -> bool {
+        match self {
+            VisualRow::Real { is_added, .. } => *is_added,
+            VisualRow::FoldSeparator { .. } => false,
+            VisualRow::GhostDeleted { .. } => true,
+        }
+    }
 }

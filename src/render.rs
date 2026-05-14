@@ -1,12 +1,10 @@
-use ratatui_core::{widgets::Widget};
+use crate::code::{RopeGraphemes, grapheme_width_and_bytes_len, grapheme_width_and_chars_len};
+use crate::editor::Editor;
+use crate::types::VisualRow;
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Style};
-use crate::editor::Editor;
-use crate::types::VisualRow;
-use crate::code::{
-    RopeGraphemes, grapheme_width_and_chars_len, grapheme_width_and_bytes_len
-};
+use ratatui_core::widgets::Widget;
 
 /// Draws the main editor view in the provided area using the ratatui rendering buffer.
 ///
@@ -36,37 +34,93 @@ impl Widget for &Editor {
         let line_number_style = Style::default().fg(Color::DarkGray);
         let default_text_style = Style::default().fg(Color::White);
 
-        let diff_added_bg = self.theme
+        let diff_added_bg = self
+            .theme
             .get("diff_added")
             .and_then(|style| style.fg)
             .unwrap_or(Color::Rgb(30, 90, 55));
 
-        let diff_deleted_bg = self.theme
+        let diff_deleted_bg = self
+            .theme
             .get("diff_deleted")
             .and_then(|style| style.fg)
             .unwrap_or(Color::Rgb(217, 75, 75));
 
+        let fold_separator_style = Style::default().fg(Color::DarkGray);
+
         // draw line numbers and text by visual rows
         for visual_row_idx in self.offset_y..total_visual_lines {
-            if draw_y >= area.bottom() { break }
+            if draw_y >= area.bottom() {
+                break;
+            }
 
             if self.has_diff() {
                 let rows = self.visual_rows.borrow();
                 if let Some(row) = rows.get(visual_row_idx) {
                     match row {
-                        VisualRow::GhostDeleted { text, .. } => {
+                        VisualRow::FoldSeparator { hidden_lines } => {
                             if self.show_line_numbers {
-                                buf.set_string(area.left(), draw_y, " ", Style::default().bg(diff_deleted_bg));
-                                let line_number = format!("{:>width$}", "-", width = line_number_digits);
-                                buf.set_string(area.left(), draw_y, &line_number, line_number_style);
+                                let line_number =
+                                    format!("{:>width$}", "...", width = line_number_digits);
+                                buf.set_string(
+                                    area.left(),
+                                    draw_y,
+                                    &line_number,
+                                    line_number_style,
+                                );
                             }
                             let text_x = area.left() + line_number_width as u16;
                             let width = (area.width as usize).saturating_sub(line_number_width);
-                            let visible_text = text.chars().skip(self.offset_x).take(width).collect::<String>();
+                            let text = format!("... {} unchanged lines hidden ...", hidden_lines);
+                            let visible_text = text.chars().take(width).collect::<String>();
+                            if text_x < area.left() + area.width
+                                && draw_y < area.top() + area.height
+                            {
+                                buf.set_string(text_x, draw_y, &visible_text, fold_separator_style);
+                            }
+                            draw_y += 1;
+                            continue;
+                        }
+                        VisualRow::GhostDeleted { text, .. } => {
+                            if self.show_line_numbers {
+                                buf.set_string(
+                                    area.left(),
+                                    draw_y,
+                                    " ",
+                                    Style::default().bg(diff_deleted_bg),
+                                );
+                                let line_number =
+                                    format!("{:>width$}", "-", width = line_number_digits);
+                                buf.set_string(
+                                    area.left(),
+                                    draw_y,
+                                    &line_number,
+                                    line_number_style,
+                                );
+                            }
+                            let text_x = area.left() + line_number_width as u16;
+                            let width = (area.width as usize).saturating_sub(line_number_width);
+                            let visible_text = text
+                                .chars()
+                                .skip(self.offset_x)
+                                .take(width)
+                                .collect::<String>();
                             let fill = " ".repeat(width);
-                            if text_x < area.left() + area.width && draw_y < area.top() + area.height {
-                                buf.set_string(text_x, draw_y, &fill, Style::default().bg(diff_deleted_bg));
-                                buf.set_string(text_x, draw_y, &visible_text, Style::default().bg(diff_deleted_bg));
+                            if text_x < area.left() + area.width
+                                && draw_y < area.top() + area.height
+                            {
+                                buf.set_string(
+                                    text_x,
+                                    draw_y,
+                                    &fill,
+                                    Style::default().bg(diff_deleted_bg),
+                                );
+                                buf.set_string(
+                                    text_x,
+                                    draw_y,
+                                    &visible_text,
+                                    Style::default().bg(diff_deleted_bg),
+                                );
                             }
                             draw_y += 1;
                             continue;
@@ -75,10 +129,21 @@ impl Widget for &Editor {
                             let line_idx = *line_idx;
                             if self.show_line_numbers {
                                 if *is_added {
-                                    buf.set_string(area.left(), draw_y, " ", Style::default().bg(diff_added_bg));
+                                    buf.set_string(
+                                        area.left(),
+                                        draw_y,
+                                        " ",
+                                        Style::default().bg(diff_added_bg),
+                                    );
                                 }
-                                let line_number = format!("{:>width$}", line_idx + 1, width = line_number_digits);
-                                buf.set_string(area.left(), draw_y, &line_number, line_number_style);
+                                let line_number =
+                                    format!("{:>width$}", line_idx + 1, width = line_number_digits);
+                                buf.set_string(
+                                    area.left(),
+                                    draw_y,
+                                    &line_number,
+                                    line_number_style,
+                                );
                             }
                             let line_len = code.line_len(line_idx);
                             let max_x = (area.width as usize).saturating_sub(line_number_width);
@@ -90,14 +155,32 @@ impl Widget for &Editor {
                             let visible_chars = code.char_slice(char_start, char_end);
                             let displayed_line = visible_chars.to_string().replace("\t", &" ");
                             let text_x = area.left() + line_number_width as u16;
-                            if text_x < area.left() + area.width && draw_y < area.top() + area.height {
+                            if text_x < area.left() + area.width
+                                && draw_y < area.top() + area.height
+                            {
                                 if *is_added {
-                                    let width = (area.width as usize).saturating_sub(line_number_width);
+                                    let width =
+                                        (area.width as usize).saturating_sub(line_number_width);
                                     let fill = " ".repeat(width);
-                                    buf.set_string(text_x, draw_y, &fill, Style::default().bg(diff_added_bg));
-                                    buf.set_string(text_x, draw_y, &displayed_line, Style::default().bg(diff_added_bg));
+                                    buf.set_string(
+                                        text_x,
+                                        draw_y,
+                                        &fill,
+                                        Style::default().bg(diff_added_bg),
+                                    );
+                                    buf.set_string(
+                                        text_x,
+                                        draw_y,
+                                        &displayed_line,
+                                        Style::default().bg(diff_added_bg),
+                                    );
                                 } else {
-                                    buf.set_string(text_x, draw_y, &displayed_line, default_text_style);
+                                    buf.set_string(
+                                        text_x,
+                                        draw_y,
+                                        &displayed_line,
+                                        default_text_style,
+                                    );
                                 }
                             }
                             draw_y += 1;
@@ -108,7 +191,9 @@ impl Widget for &Editor {
             }
 
             let line_idx = visual_row_idx;
-            if line_idx >= total_lines { break }
+            if line_idx >= total_lines {
+                break;
+            }
             if self.show_line_numbers {
                 let line_number = format!("{:>width$}", line_idx + 1, width = line_number_digits);
                 buf.set_string(area.left(), draw_y, &line_number, line_number_style);
@@ -131,7 +216,6 @@ impl Widget for &Editor {
 
         // draw syntax highlighting
         if code.is_highlight() {
-
             // Render syntax highlighting for the visible portion of the text buffer.
             // For each visible line within the viewport, limit the highlighting to the
             // visible columns to avoid expensive processing of long lines outside the view.
@@ -140,22 +224,32 @@ impl Widget for &Editor {
 
             for screen_y in 0..(area.height as usize) {
                 let visual_line_idx = self.offset_y + screen_y;
-                if visual_line_idx >= total_visual_lines { break }
+                if visual_line_idx >= total_visual_lines {
+                    break;
+                }
                 let mut line_idx = self.real_line_for_visual_row(visual_line_idx);
                 let mut use_original_code = false;
                 let mut line_is_added = false;
                 if self.has_diff() {
                     let rows = self.visual_rows.borrow();
-                    let Some(row) = rows.get(visual_line_idx) else { continue };
+                    let Some(row) = rows.get(visual_line_idx) else {
+                        continue;
+                    };
                     match row {
-                        VisualRow::Real { line_idx: idx, is_added } => {
+                        VisualRow::Real {
+                            line_idx: idx,
+                            is_added,
+                        } => {
                             line_idx = *idx;
                             line_is_added = *is_added;
                         }
-                        VisualRow::GhostDeleted { original_line_idx, .. } => {
+                        VisualRow::GhostDeleted {
+                            original_line_idx, ..
+                        } => {
                             line_idx = *original_line_idx;
                             use_original_code = true;
                         }
+                        VisualRow::FoldSeparator { .. } => continue,
                     }
                 }
 
@@ -167,7 +261,9 @@ impl Widget for &Editor {
 
                 let source_total_chars = source_code.len_chars();
                 let source_total_lines = source_code.len_lines();
-                if line_idx >= source_total_lines { continue }
+                if line_idx >= source_total_lines {
+                    continue;
+                }
 
                 let line_len = source_code.line_len(line_idx);
                 let max_x = (area.width as usize).saturating_sub(line_number_width);
@@ -199,17 +295,25 @@ impl Widget for &Editor {
                 for g in RopeGraphemes::new(&chars) {
                     let (g_width, g_bytes) = grapheme_width_and_bytes_len(g);
 
-                    if x >= max_x { break; }
+                    if x >= max_x {
+                        break;
+                    }
 
                     let start_x = area.left() + line_number_width as u16 + x as u16;
                     let draw_y = area.top() + screen_y as u16;
 
                     for dx in 0..g_width {
-                        if x + dx >= max_x { break; }
+                        if x + dx >= max_x {
+                            break;
+                        }
                         let draw_x = start_x + dx as u16;
                         for &(start, end, s) in &highlights {
                             if start <= byte_idx_in_rope && byte_idx_in_rope < end {
-                                let style = if line_is_added { s.bg(diff_added_bg) } else { s };
+                                let style = if line_is_added {
+                                    s.bg(diff_added_bg)
+                                } else {
+                                    s
+                                };
                                 buf[(draw_x, draw_y)].set_style(style);
                                 break;
                             }
@@ -223,7 +327,9 @@ impl Widget for &Editor {
         }
 
         // draw selection
-        if let Some(selection) = self.selection && !selection.is_empty() {
+        if let Some(selection) = self.selection
+            && !selection.is_empty()
+        {
             let start = selection.start.min(selection.end);
             let end = selection.start.max(selection.end);
 
@@ -232,8 +338,12 @@ impl Widget for &Editor {
 
             for line_idx in start_line..=end_line {
                 let visual_line_idx = self.visual_line_idx(line_idx);
-                if visual_line_idx < self.offset_y { continue }
-                if visual_line_idx >= self.offset_y + area.height as usize { break }
+                if visual_line_idx < self.offset_y {
+                    continue;
+                }
+                if visual_line_idx >= self.offset_y + area.height as usize {
+                    break;
+                }
 
                 let line_start_char = code.line_to_char(line_idx);
                 let line_len = code.line_len(line_idx);
@@ -266,7 +376,8 @@ impl Widget for &Editor {
                         for dx in 0..g_width as u16 {
                             let draw_x = start_x + dx;
                             if draw_x < area.right() && draw_y < area.bottom() {
-                                buf[(draw_x, draw_y)].set_style(Style::default().bg(Color::DarkGray));
+                                buf[(draw_x, draw_y)]
+                                    .set_style(Style::default().bg(Color::DarkGray));
                             }
                         }
                     }
@@ -280,14 +391,18 @@ impl Widget for &Editor {
         // draw marks
         if let Some(ref marks) = self.marks {
             for &(start, end, color) in marks {
-                if start >= end || end > total_chars { continue }
+                if start >= end || end > total_chars {
+                    continue;
+                }
 
                 let start_line = code.char_to_line(start);
                 let end_line = code.char_to_line(end);
 
                 for line_idx in start_line..=end_line {
                     let visual_line_idx = self.visual_line_idx(line_idx);
-                    if visual_line_idx < self.offset_y || visual_line_idx >= self.offset_y + area.height as usize {
+                    if visual_line_idx < self.offset_y
+                        || visual_line_idx >= self.offset_y + area.height as usize
+                    {
                         continue;
                     }
 

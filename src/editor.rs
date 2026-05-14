@@ -1,19 +1,19 @@
-use std::time::Duration;
+use crate::actions::*;
 use crate::click::{ClickKind, ClickTracker};
 use crate::code::Code;
 use crate::code::{EditBatch, Operation};
-use crate::code::{RopeGraphemes, grapheme_width_and_chars_len, grapheme_width};
+use crate::code::{RopeGraphemes, grapheme_width, grapheme_width_and_chars_len};
 use crate::selection::{Selection, SelectionSnap};
 use crate::types::{HightlightCache, Theme, VisualRow};
-use crate::actions::*;
 use crate::utils;
+use anyhow::{Result, anyhow};
+use ratatui_core::layout::Rect;
+use ratatui_core::style::{Color, Style};
+use similar::{ChangeTag, TextDiff};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
-use similar::{ChangeTag, TextDiff};
-use ratatui_core::layout::Rect;
-use ratatui_core::style::{Color, Style};
+use std::time::Duration;
 
 /// Represents the text editor, which holds the code buffer, cursor, selection,
 /// theme, scroll offsets, highlight cache, clipboard, and user mark intervals.
@@ -60,6 +60,12 @@ pub struct Editor {
     /// Runtime toggle for diff rendering and visual rows.
     pub(crate) diff_enabled: bool,
 
+    /// Runtime toggle for showing only changed diff rows with surrounding context.
+    pub(crate) diff_focus_enabled: bool,
+
+    /// Number of unchanged visual rows shown around focused diff rows.
+    pub(crate) diff_focus_context: usize,
+
     /// Original code snapshot used for diff and ghost-line highlighting.
     pub(crate) original_code: Option<Code>,
 
@@ -99,6 +105,8 @@ impl Editor {
             show_line_numbers: true,
             left_code_padding: 2,
             diff_enabled: false,
+            diff_focus_enabled: false,
+            diff_focus_context: 3,
             original_code: None,
             visual_rows: RefCell::new(Vec::new()),
         })
@@ -113,9 +121,13 @@ impl Editor {
         } else {
             self.left_code_padding
         }
-    } 
+    }
 
     pub fn focus(&mut self, area: &Rect) {
+        self.fit_cursor();
+        self.clamp_cursor_to_focus_rows();
+        self.clamp_offset_y();
+
         let width = area.width as usize;
         let height = area.height as usize;
         let line_number_width = self.get_line_number_width();
@@ -123,17 +135,17 @@ impl Editor {
         let line = self.code.char_to_line(self.cursor);
         let col = self.cursor - self.code.line_to_char(line);
         let visual_line = self.visual_line_idx(line);
-    
+
         let visible_width = width.saturating_sub(line_number_width);
         let visible_height = height;
-    
+
         let step_size = 10;
         if col < self.offset_x {
             self.offset_x = col.saturating_sub(step_size);
         } else if col >= self.offset_x + visible_width {
-            self.offset_x = col.saturating_sub(visible_width - step_size);
+            self.offset_x = col.saturating_sub(visible_width.saturating_sub(step_size));
         }
-    
+
         if visual_line < self.offset_y {
             self.offset_y = visual_line;
         } else if visual_line >= self.offset_y + visible_height {
@@ -167,26 +179,26 @@ impl Editor {
             SelectionSnap::Line { anchor } => {
                 let (anchor_start, anchor_end) = self.code.line_boundaries(anchor);
                 let (cur_start, cur_end) = self.code.line_boundaries(cursor);
-        
+
                 let (sel_start, sel_end, new_cursor) = match cursor.cmp(&anchor) {
-                    Ordering::Greater => (anchor_start, cur_end, cur_end),   // forward
-                    Ordering::Less => (cur_start, anchor_end, cur_start),    // backward
-                    Ordering::Equal => (anchor_start, anchor_end, anchor_end), 
+                    Ordering::Greater => (anchor_start, cur_end, cur_end), // forward
+                    Ordering::Less => (cur_start, anchor_end, cur_start),  // backward
+                    Ordering::Equal => (anchor_start, anchor_end, anchor_end),
                 };
-        
+
                 self.selection = Some(Selection::from_anchor_and_cursor(sel_start, sel_end));
                 self.cursor = new_cursor;
             }
             SelectionSnap::Word { anchor } => {
                 let (anchor_start, anchor_end) = self.code.word_boundaries(anchor);
                 let (cur_start, cur_end) = self.code.word_boundaries(cursor);
-        
+
                 let (sel_start, sel_end, new_cursor) = match cursor.cmp(&anchor) {
-                    Ordering::Greater => (anchor_start, cur_end, cur_end),   // forward
-                    Ordering::Less => (cur_start, anchor_end, cur_start),    // backward
+                    Ordering::Greater => (anchor_start, cur_end, cur_end), // forward
+                    Ordering::Less => (cur_start, anchor_end, cur_start),  // backward
                     Ordering::Equal => (anchor_start, anchor_end, anchor_end),
                 };
-        
+
                 self.selection = Some(Selection::from_anchor_and_cursor(sel_start, sel_end));
                 self.cursor = new_cursor;
             }
@@ -199,48 +211,50 @@ impl Editor {
     }
 
     /// Converts mouse coordinates to a cursor position within the editor area, returning `None` if outside.
-    pub fn cursor_from_mouse(
-        &self, mouse_x: u16, mouse_y: u16, area: &Rect
-    ) -> Option<usize> {
+    pub fn cursor_from_mouse(&self, mouse_x: u16, mouse_y: u16, area: &Rect) -> Option<usize> {
         let line_number_width = self.get_line_number_width() as u16;
-    
+
         if mouse_y < area.top()
             || mouse_y >= area.bottom()
             || mouse_x < area.left() + line_number_width
         {
             return None;
         }
-    
+
         let clicked_visual_row = (mouse_y - area.top()) as usize + self.offset_y;
         let clicked_row = self.real_line_for_visual_row(clicked_visual_row);
         if clicked_row >= self.code.len_lines() {
             return None;
         }
-    
+
         let clicked_col = (mouse_x - area.left() - line_number_width) as usize;
-    
+
         let line_start_char = self.code.line_to_char(clicked_row);
         let line_len = self.code.line_len(clicked_row);
-    
+
         let start_col = self.offset_x.min(line_len);
         let end_col = line_len;
-    
+
         let char_start = line_start_char + start_col;
         let char_end = line_start_char + end_col;
-    
+
         let mut current_col = 0;
-        let mut char_idx = start_col;        
+        let mut char_idx = start_col;
         let visible_chars = self.code.char_slice(char_start, char_end);
         for g in RopeGraphemes::new(&visible_chars) {
-            let (g_width, g_chars) = grapheme_width_and_chars_len(g);        
-            if current_col + g_width > clicked_col { break; }
+            let (g_width, g_chars) = grapheme_width_and_chars_len(g);
+            if current_col + g_width > clicked_col {
+                break;
+            }
             current_col += g_width;
             char_idx += g_chars;
         }
-    
-        let line = self.code.char_slice(line_start_char, line_start_char + line_len);
+
+        let line = self
+            .code
+            .char_slice(line_start_char, line_start_char + line_len);
         let visual_width: usize = RopeGraphemes::new(&line).map(grapheme_width).sum();
-    
+
         if clicked_col + self.offset_x >= visual_width {
             let mut end_idx = line.len_chars();
             if end_idx > 0 && line.char(end_idx - 1) == '\n' {
@@ -248,7 +262,7 @@ impl Editor {
             }
             char_idx = end_idx;
         }
-    
+
         Some(line_start_char + char_idx)
     }
 
@@ -264,12 +278,18 @@ impl Editor {
         let anchor = self.selection_anchor();
         self.selection = Some(Selection::from_anchor_and_cursor(anchor, new_cursor));
     }
-    
+
     /// Returns the selection anchor position, or the cursor if no selection exists.
     pub fn selection_anchor(&self) -> usize {
         self.selection
             .as_ref()
-            .map(|s| if self.cursor == s.start { s.end } else { s.start })
+            .map(|s| {
+                if self.cursor == s.start {
+                    s.end
+                } else {
+                    s.start
+                }
+            })
             .unwrap_or(self.cursor)
     }
 
@@ -300,6 +320,7 @@ impl Editor {
         self.highlights_cache.borrow_mut().clear();
         self.original_code = None;
         self.visual_rows.borrow_mut().clear();
+        self.offset_y = 0;
     }
 
     pub fn has_diff(&self) -> bool {
@@ -309,10 +330,37 @@ impl Editor {
     pub fn set_diff_enabled(&mut self, enabled: bool) {
         self.diff_enabled = enabled;
         self.rebuild_visual_rows();
+        self.clamp_offset_y();
     }
 
     pub fn is_diff_enabled(&self) -> bool {
         self.diff_enabled
+    }
+
+    pub fn set_diff_focus_enabled(&mut self, enabled: bool) {
+        self.diff_focus_enabled = enabled;
+        self.rebuild_visual_rows();
+        self.clamp_cursor_to_focus_rows();
+        self.clamp_offset_y();
+    }
+
+    pub fn toggle_diff_focus(&mut self) {
+        self.set_diff_focus_enabled(!self.diff_focus_enabled);
+    }
+
+    pub fn is_diff_focus_enabled(&self) -> bool {
+        self.diff_focus_enabled
+    }
+
+    pub fn set_diff_focus_context(&mut self, context_lines: usize) {
+        self.diff_focus_context = context_lines;
+        self.rebuild_visual_rows();
+        self.clamp_cursor_to_focus_rows();
+        self.clamp_offset_y();
+    }
+
+    pub fn diff_focus_context(&self) -> usize {
+        self.diff_focus_context
     }
 
     pub fn apply_batch(&mut self, batch: &EditBatch) {
@@ -324,14 +372,15 @@ impl Editor {
         if let Some(state) = &batch.state_after {
             self.code.set_state_after(state.offset, state.selection);
         }
-        
+
         for edit in &batch.edits {
             match edit.operation {
                 Operation::Insert => {
                     self.code.insert(edit.start, &edit.text);
                 }
                 Operation::Remove => {
-                    self.code.remove(edit.start, edit.start + edit.text.chars().count());
+                    self.code
+                        .remove(edit.start, edit.start + edit.text.chars().count());
                 }
             }
         }
@@ -342,10 +391,11 @@ impl Editor {
     pub fn set_cursor(&mut self, cursor: usize) {
         self.cursor = cursor;
         self.fit_cursor();
+        self.clamp_cursor_to_focus_rows();
     }
 
     pub fn fit_cursor(&mut self) {
-        // make sure cursor is not out of bounds 
+        // make sure cursor is not out of bounds
         let len = self.code.len_chars();
         self.cursor = self.cursor.min(len);
 
@@ -370,7 +420,8 @@ impl Editor {
     }
 
     fn build_theme(theme: &Vec<(&str, &str)>) -> Theme {
-        theme.into_iter()
+        theme
+            .into_iter()
             .map(|(name, hex)| {
                 let (r, g, b) = utils::rgb(hex);
                 (name.to_string(), Style::default().fg(Color::Rgb(r, g, b)))
@@ -407,12 +458,13 @@ impl Editor {
 
     pub fn set_marks(&mut self, marks: Vec<(usize, usize, &str)>) {
         self.marks = Some(
-            marks.into_iter()
+            marks
+                .into_iter()
                 .map(|(start, end, color)| {
                     let (r, g, b) = utils::rgb(color);
                     (start, end, Color::Rgb(r, g, b))
                 })
-                .collect()
+                .collect(),
         );
     }
 
@@ -429,7 +481,9 @@ impl Editor {
     }
 
     pub fn get_selection_text(&mut self) -> Option<String> {
-        if let Some(selection) = &self.selection && !selection.is_empty() {
+        if let Some(selection) = &self.selection
+            && !selection.is_empty()
+        {
             let text = self.code.slice(selection.start, selection.end);
             return Some(text);
         }
@@ -437,7 +491,7 @@ impl Editor {
     }
 
     pub fn get_selection(&mut self) -> Option<Selection> {
-       return self.selection;
+        return self.selection;
     }
 
     pub fn set_selection(&mut self, selection: Option<Selection>) {
@@ -451,7 +505,7 @@ impl Editor {
     pub fn set_offset_x(&mut self, offset_x: usize) {
         self.offset_x = offset_x;
     }
-    
+
     pub fn get_offset_y(&self) -> usize {
         self.offset_y
     }
@@ -469,12 +523,19 @@ impl Editor {
 
     pub(crate) fn real_line_for_visual_row(&self, visual_row: usize) -> usize {
         let last = self.code.len_lines().saturating_sub(1);
-        if !self.has_diff() { return visual_row.min(last); }
+        if !self.has_diff() {
+            return visual_row.min(last);
+        }
 
-        self.visual_rows.borrow().get(visual_row)
+        self.visual_rows
+            .borrow()
+            .get(visual_row)
             .map(|row| match row {
                 VisualRow::Real { line_idx, .. } => *line_idx,
-                VisualRow::GhostDeleted { anchor_line, .. } => anchor_line.saturating_sub(1).min(last),
+                VisualRow::FoldSeparator { .. } => last,
+                VisualRow::GhostDeleted { anchor_line, .. } => {
+                    anchor_line.saturating_sub(1).min(last)
+                }
             })
             .unwrap_or(last)
     }
@@ -484,7 +545,9 @@ impl Editor {
             let rows = self.visual_rows.borrow();
             return rows
                 .iter()
-                .position(|row| matches!(row, VisualRow::Real { line_idx: idx, .. } if *idx == line_idx))
+                .position(
+                    |row| matches!(row, VisualRow::Real { line_idx: idx, .. } if *idx == line_idx),
+                )
                 .unwrap_or(line_idx);
         }
         line_idx
@@ -500,13 +563,17 @@ impl Editor {
 
     /// Set the change callback function for handling document changes
     pub fn set_change_callback(
-        &mut self, callback: Box<dyn Fn(Vec<(usize, usize, usize, usize, String)>)>
+        &mut self,
+        callback: Box<dyn Fn(Vec<(usize, usize, usize, usize, String)>)>,
     ) {
         self.code.set_change_callback(callback);
     }
 
     pub fn highlight_interval(
-        &self, start: usize, end: usize, theme: &Theme
+        &self,
+        start: usize,
+        end: usize,
+        theme: &Theme,
     ) -> Vec<(usize, usize, Style)> {
         let mut cache = self.highlights_cache.borrow_mut();
         let key = (0, start, end);
@@ -520,7 +587,10 @@ impl Editor {
     }
 
     pub fn highlight_interval_original(
-        &self, start: usize, end: usize, theme: &Theme
+        &self,
+        start: usize,
+        end: usize,
+        theme: &Theme,
     ) -> Vec<(usize, usize, Style)> {
         let Some(original) = &self.original_code else {
             return Vec::new();
@@ -540,44 +610,137 @@ impl Editor {
         self.highlights_cache.borrow_mut().clear();
         self.rebuild_visual_rows();
     }
-    
-    /// calculates visible cursor position 
-    pub fn get_visible_cursor(
-        &self, area: &Rect
-    ) -> Option<(u16, u16)> {
+
+    fn clamp_offset_y(&mut self) {
+        self.offset_y = self.offset_y.min(self.visual_len_lines().saturating_sub(1));
+    }
+
+    pub(crate) fn previous_focus_real_line(&self, line_idx: usize) -> Option<usize> {
+        if !self.is_diff_focus_active() {
+            return None;
+        }
+
+        self.visual_rows.borrow().iter().rev().find_map(|row| {
+            if let VisualRow::Real { line_idx: idx, .. } = row
+                && *idx < line_idx
+            {
+                return Some(*idx);
+            }
+            None
+        })
+    }
+
+    pub(crate) fn next_focus_real_line(&self, line_idx: usize) -> Option<usize> {
+        if !self.is_diff_focus_active() {
+            return None;
+        }
+
+        self.visual_rows.borrow().iter().find_map(|row| {
+            if let VisualRow::Real { line_idx: idx, .. } = row
+                && *idx > line_idx
+            {
+                return Some(*idx);
+            }
+            None
+        })
+    }
+
+    pub(crate) fn is_diff_focus_active(&self) -> bool {
+        self.has_diff() && self.diff_focus_enabled
+    }
+
+    fn clamp_cursor_to_focus_rows(&mut self) {
+        if !self.is_diff_focus_active() {
+            return;
+        }
+
+        let (cursor_line, cursor_char_col) = self.code.point(self.cursor);
+        if self.focus_real_line_visible(cursor_line) {
+            return;
+        }
+
+        let current_visual_col = self.code.char_col_to_visual(cursor_line, cursor_char_col);
+        let Some(target_line) = self.nearest_focus_real_line(cursor_line) else {
+            return;
+        };
+        let target_start = self.code.line_to_char(target_line);
+        let target_len = self.code.line_len(target_line);
+        let target_col = self
+            .code
+            .visual_to_char_col(target_line, current_visual_col)
+            .min(target_len);
+
+        self.cursor = target_start + target_col;
+        self.clear_selection();
+    }
+
+    fn focus_real_line_visible(&self, line_idx: usize) -> bool {
+        self.visual_rows
+            .borrow()
+            .iter()
+            .any(|row| matches!(row, VisualRow::Real { line_idx: idx, .. } if *idx == line_idx))
+    }
+
+    fn nearest_focus_real_line(&self, line_idx: usize) -> Option<usize> {
+        let prev = self.previous_focus_real_line(line_idx);
+        let next = self.next_focus_real_line(line_idx);
+
+        match (prev, next) {
+            (Some(prev), Some(next)) => {
+                if line_idx - prev <= next - line_idx {
+                    Some(prev)
+                } else {
+                    Some(next)
+                }
+            }
+            (Some(prev), None) => Some(prev),
+            (None, Some(next)) => Some(next),
+            (None, None) => None,
+        }
+    }
+
+    /// calculates visible cursor position
+    pub fn get_visible_cursor(&self, area: &Rect) -> Option<(u16, u16)> {
         let line_number_width = self.get_line_number_width();
 
         let (cursor_line, cursor_char_col) = self.code.point(self.cursor);
         let cursor_visual_line = self.visual_line_idx(cursor_line);
 
-        if cursor_visual_line >= self.offset_y && cursor_visual_line < self.offset_y + area.height as usize {
+        if cursor_visual_line >= self.offset_y
+            && cursor_visual_line < self.offset_y + area.height as usize
+        {
             let line_start_char = self.code.line_to_char(cursor_line);
             let line_len = self.code.line_len(cursor_line);
-        
+
             let max_x = (area.width as usize).saturating_sub(line_number_width);
             let start_col = self.offset_x;
-                
+
             let cursor_visual_col: usize = {
-                let slice = self.code.char_slice(line_start_char, line_start_char + cursor_char_col.min(line_len));
+                let slice = self.code.char_slice(
+                    line_start_char,
+                    line_start_char + cursor_char_col.min(line_len),
+                );
                 RopeGraphemes::new(&slice).map(grapheme_width).sum()
             };
-            
+
             let offset_visual_col: usize = {
-                let slice = self.code.char_slice(line_start_char, line_start_char + start_col.min(line_len));
+                let slice = self
+                    .code
+                    .char_slice(line_start_char, line_start_char + start_col.min(line_len));
                 RopeGraphemes::new(&slice).map(grapheme_width).sum()
             };
-        
+
             let relative_visual_col = cursor_visual_col.saturating_sub(offset_visual_col);
             let visible_x = relative_visual_col.min(max_x);
-        
+
             let cursor_x = area.left() + (line_number_width + visible_x) as u16;
             let cursor_y = area.top() + (cursor_visual_line - self.offset_y) as u16;
-        
+
             if cursor_x < area.right() && cursor_y < area.bottom() {
                 return Some((cursor_x, cursor_y));
             }
         }
-        
+
         return None;
     }
 
@@ -599,6 +762,17 @@ impl Editor {
             return;
         };
 
+        let full_rows = self.build_diff_visual_rows(original);
+        let rows = if self.diff_focus_enabled {
+            Self::focused_diff_rows(&full_rows, self.diff_focus_context)
+        } else {
+            full_rows
+        };
+
+        *self.visual_rows.borrow_mut() = rows;
+    }
+
+    fn build_diff_visual_rows(&self, original: &Code) -> Vec<VisualRow> {
         let current = self.code.get_content();
         let original_text = original.get_content();
         let diff = TextDiff::from_lines(&original_text, &current);
@@ -627,7 +801,10 @@ impl Editor {
                                 original_line_idx: orig_idx,
                             });
                         }
-                        rows.push(VisualRow::Real { line_idx: current_line_idx, is_added: true });
+                        rows.push(VisualRow::Real {
+                            line_idx: current_line_idx,
+                            is_added: true,
+                        });
                         current_line_idx += 1;
                     }
                     ChangeTag::Equal => {
@@ -639,7 +816,10 @@ impl Editor {
                                 original_line_idx: orig_idx,
                             });
                         }
-                        rows.push(VisualRow::Real { line_idx: current_line_idx, is_added: false });
+                        rows.push(VisualRow::Real {
+                            line_idx: current_line_idx,
+                            is_added: false,
+                        });
                         current_line_idx += 1;
                         original_line_idx += 1;
                     }
@@ -660,10 +840,73 @@ impl Editor {
 
         // Keep a safe fallback mapping for unusual trailing newline cases.
         while current_line_idx < self.code.len_lines() {
-            rows.push(VisualRow::Real { line_idx: current_line_idx, is_added: false });
+            rows.push(VisualRow::Real {
+                line_idx: current_line_idx,
+                is_added: false,
+            });
             current_line_idx += 1;
         }
 
-        *self.visual_rows.borrow_mut() = rows;
+        rows
+    }
+
+    fn focused_diff_rows(rows: &[VisualRow], context_lines: usize) -> Vec<VisualRow> {
+        let mut include = vec![false; rows.len()];
+
+        for (idx, row) in rows.iter().enumerate() {
+            if row.is_changed() {
+                let start = idx.saturating_sub(context_lines);
+                let end = (idx + context_lines + 1).min(rows.len());
+                for should_include in include.iter_mut().take(end).skip(start) {
+                    *should_include = true;
+                }
+            }
+        }
+
+        rows.iter()
+            .enumerate()
+            .filter_map(|(idx, row)| include[idx].then_some((idx, row)))
+            .fold(Vec::new(), |mut focused, (idx, row)| {
+                if let Some((prev_idx, _)) = focused.last()
+                    && idx > prev_idx + 1
+                {
+                    focused.push((
+                        idx,
+                        VisualRow::FoldSeparator {
+                            hidden_lines: idx - prev_idx - 1,
+                        },
+                    ));
+                }
+                focused.push((idx, row.clone()));
+                focused
+            })
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn real(line_idx: usize, is_added: bool) -> VisualRow {
+        VisualRow::Real { line_idx, is_added }
+    }
+
+    #[test]
+    fn focus_diff_focus_clamps_cursor_before_moving_viewport() {
+        let mut editor = Editor::new("text", "0\n1\n2\n3\n4\n5\n", vec![]).unwrap();
+        editor.set_diff_enabled(true);
+        editor.set_original_code("0\n1\n2\n3\n4\n5\n").unwrap();
+        editor.set_diff_focus_enabled(true);
+        *editor.visual_rows.borrow_mut() = vec![real(4, true)];
+        editor.cursor = editor.code.line_to_char(1);
+        editor.offset_y = 99;
+
+        editor.focus(&Rect::new(0, 0, 80, 10));
+
+        assert_eq!(editor.code.point(editor.get_cursor()).0, 4);
+        assert_eq!(editor.get_offset_y(), 0);
     }
 }

@@ -92,15 +92,27 @@ pub struct MoveUp {
 impl Action for MoveUp {
     fn apply(&mut self, editor: &mut Editor) {
         let cursor = editor.get_cursor();
-        let code = editor.code_mut();
+        let code = editor.code_ref();
         let (row, col) = code.point(cursor);
 
-        if row == 0 { return }
+        let prev_row = if editor.is_diff_focus_active() {
+            let Some(prev_row) = editor.previous_focus_real_line(row) else {
+                return;
+            };
+            prev_row
+        } else {
+            let Some(prev_row) = row.checked_sub(1) else {
+                return;
+            };
+            prev_row
+        };
 
         let current_visual_col = code.char_col_to_visual(row, col);
-        let prev_start = code.line_to_char(row - 1);
-        let prev_len = code.line_len(row - 1);
-        let new_col = code.visual_to_char_col(row - 1, current_visual_col).min(prev_len);
+        let prev_start = code.line_to_char(prev_row);
+        let prev_len = code.line_len(prev_row);
+        let new_col = code
+            .visual_to_char_col(prev_row, current_visual_col)
+            .min(prev_len);
         let new_cursor = prev_start + new_col;
 
         // Update selection or clear it
@@ -128,16 +140,26 @@ pub struct MoveDown {
 impl Action for MoveDown {
     fn apply(&mut self, editor: &mut Editor) {
         let cursor = editor.get_cursor();
-        let code = editor.code_mut();
+        let code = editor.code_ref();
         let (row, col) = code.point(cursor);
-        let is_last_line = row + 1 >= code.len_lines();
-        if is_last_line { return }
+        let next_row = if editor.is_diff_focus_active() {
+            let Some(next_row) = editor.next_focus_real_line(row) else {
+                return;
+            };
+            next_row
+        } else {
+            let is_last_line = row + 1 >= code.len_lines();
+            if is_last_line {
+                return;
+            }
+            row + 1
+        };
 
         let current_visual_col = code.char_col_to_visual(row, col);
-        let next_start = code.line_to_char(row + 1);
-        let next_len = code.line_len(row + 1);
+        let next_start = code.line_to_char(next_row);
+        let next_len = code.line_len(next_row);
         let new_col = code
-            .visual_to_char_col(row + 1, current_visual_col)
+            .visual_to_char_col(next_row, current_visual_col)
             .min(next_len);
         let new_cursor = next_start + new_col;
 
@@ -214,7 +236,9 @@ impl Action for InsertNewline {
         let text_to_insert = format!("\n{}", indent_text);
 
         // 4. Use InsertText action to insert the text
-        let mut insert_action = InsertText { text: text_to_insert };
+        let mut insert_action = InsertText {
+            text: text_to_insert,
+        };
         insert_action.apply(editor);
     }
 }
