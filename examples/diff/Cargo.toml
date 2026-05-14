@@ -1,0 +1,14 @@
+[package]
+name = "diff"
+version = "0.0.1"
+edition = "2024"
+
+[[bin]]
+name = "diff"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = {workspace = true}
+crossterm = {workspace = true}
+ratatui = {workspace = true}
+ratatui-code-editor = {workspace = true, features = ["crossterm"]}

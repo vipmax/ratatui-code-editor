@@ -1,0 +1,15 @@
+[package]
+name = "diff_editor"
+version = "0.0.1"
+edition = "2024"
+
+[[bin]]
+name = "diff_editor"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+crossterm = { workspace = true }
+ratatui = { workspace = true }
+git2 = "0.20"
+ratatui-code-editor = { workspace = true, features = ["crossterm"] }

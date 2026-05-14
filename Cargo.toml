@@ -8,6 +8,8 @@ members = [
     "examples/split",
     "examples/marks",
     "examples/lsp",
+    "examples/diff",
+    "examples/diff_editor",
 ]
 
 [package]
@@ -24,11 +26,6 @@ keywords = ["ratatui", "terminal", "editor", "tree-sitter"]
 categories = ["command-line-interface", "text-editors"]
 exclude = [".anycode/*", "Cargo.toml.orig"]
 
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = "s"
-strip = true
 
 [workspace.dependencies]
 anyhow = "^1.0"
@@ -50,6 +47,7 @@ tree-sitter-typescript = "~0.23"
 unicode-width = "~0.2"
 unicode-segmentation = "^1.12"
 arboard = { version = "^3.5", default-features = false }
+similar = "^2.7"
 tree-sitter-python = "~0.25"
 tree-sitter-go = "~0.25"
 tree-sitter-java = "~0.23.5"

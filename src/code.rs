@@ -190,6 +190,10 @@ impl Code {
         self.content.to_string()
     }
 
+    pub fn lang(&self) -> &str {
+        &self.lang
+    }
+
     pub fn slice(&self, start: usize, end: usize) -> String {
         self.content.slice(start..end).to_string()
     }

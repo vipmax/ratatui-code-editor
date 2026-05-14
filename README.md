@@ -130,6 +130,12 @@ cargo run --release -p split
 
 # Editor
 cargo run --release -p editor -- <filename>
+
+# Diff demo (requires diff feature in the example)
+cargo run --release -p diff
+
+# Diff editor for a real file (loads original from git HEAD when available)
+cargo run --release -p diff_editor -- <filename>
 ```
 
 ## Key Bindings
