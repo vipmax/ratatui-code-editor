@@ -51,6 +51,10 @@ impl Editor {
             MouseEventKind::ScrollUp => self.scroll_up(),
             MouseEventKind::ScrollDown => self.scroll_down(area.height as usize),
             MouseEventKind::Down(MouseButton::Left) => {
+                if self.is_diff_focus_active() &&
+                    self.expand_hidden_diff_at_mouse(mouse.column, mouse.row, area) {
+                    return Ok(());
+                }
                 let pos = self.cursor_from_mouse(mouse.column, mouse.row, area);
                 if let Some(cursor) = pos {
                     self.handle_mouse_down(cursor);

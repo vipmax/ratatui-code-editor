@@ -1,6 +1,7 @@
 use crate::code::{RopeGraphemes, grapheme_width_and_bytes_len, grapheme_width_and_chars_len};
 use crate::editor::Editor;
 use crate::types::VisualRow;
+use crate::view::View;
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Style};
@@ -8,11 +9,9 @@ use ratatui_core::widgets::Widget;
 
 /// Draws the main editor view in the provided area using the ratatui rendering buffer.
 ///
-/// Renders the main editor view in four distinct layers:
-/// 1. Line numbers and text content are drawn in the visible viewport.
-/// 2. Syntax highlighting is overlaid on top of the text.
-/// 3. The selection highlight is rendered above the syntax layer.
-/// 4. User marks are rendered as the final uppermost overlay.
+/// Renders visible [`VisualRow`]s, including fold separators and deleted diff rows.
+/// Added and deleted rows receive a diff background before syntax highlighting is
+/// applied. Selections and user marks are then drawn over real editor rows.
 ///
 /// # Arguments
 ///
@@ -23,7 +22,6 @@ use ratatui_core::widgets::Widget;
 impl Widget for &Editor {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let code = self.code_ref();
-        let total_chars = code.len_chars();
         let total_lines = code.len_lines();
         let max_line_number = total_lines.max(1);
         let line_number_digits = max_line_number.to_string().len().max(5);
@@ -34,417 +32,177 @@ impl Widget for &Editor {
         let line_number_style = Style::default().fg(Color::DarkGray);
         let default_text_style = Style::default().fg(Color::White);
 
-        let diff_added_bg = self
-            .theme
-            .get("diff_added")
-            .and_then(|style| style.fg)
-            .unwrap_or(Color::Rgb(30, 90, 55));
-
-        let diff_deleted_bg = self
-            .theme
-            .get("diff_deleted")
-            .and_then(|style| style.fg)
-            .unwrap_or(Color::Rgb(217, 75, 75));
+        let diff_added_bg = self.theme.get("diff_added").and_then(|s| s.fg).unwrap_or(Color::Rgb(30, 90, 55));
+        let diff_deleted_bg = self.theme.get("diff_deleted").and_then(|s| s.fg).unwrap_or(Color::Rgb(217, 75, 75));
 
         let fold_separator_style = Style::default().fg(Color::DarkGray);
 
-        // draw line numbers and text by visual rows
+        // draw lines, syntax highlighting, selection and marks in a single unified loop
         for visual_row_idx in self.offset_y..total_visual_lines {
             if draw_y >= area.bottom() {
                 break;
             }
 
-            if self.has_diff() {
-                if let Some(row) = self.visual_row(visual_row_idx) {
-                    match row {
-                        VisualRow::FoldSeparator { hidden_lines } => {
-                            if self.show_line_numbers {
-                                let line_number =
-                                    format!("{:>width$}", "...", width = line_number_digits);
-                                buf.set_string(
-                                    area.left(),
-                                    draw_y,
-                                    &line_number,
-                                    line_number_style,
-                                );
-                            }
-                            let text_x = area.left() + line_number_width as u16;
-                            let width = (area.width as usize).saturating_sub(line_number_width);
-                            let text = format!("... {} unchanged lines hidden ...", hidden_lines);
-                            let visible_text = text.chars().take(width).collect::<String>();
-                            if text_x < area.left() + area.width
-                                && draw_y < area.top() + area.height
-                            {
-                                buf.set_string(text_x, draw_y, &visible_text, fold_separator_style);
-                            }
-                            draw_y += 1;
-                            continue;
-                        }
-                        VisualRow::GhostDeleted { text, .. } => {
-                            if self.show_line_numbers {
-                                buf.set_string(
-                                    area.left(),
-                                    draw_y,
-                                    " ",
-                                    Style::default().bg(diff_deleted_bg),
-                                );
-                                let line_number =
-                                    format!("{:>width$}", "-", width = line_number_digits);
-                                buf.set_string(
-                                    area.left(),
-                                    draw_y,
-                                    &line_number,
-                                    line_number_style,
-                                );
-                            }
-                            let text_x = area.left() + line_number_width as u16;
-                            let width = (area.width as usize).saturating_sub(line_number_width);
-                            let visible_text = text
-                                .chars()
-                                .skip(self.offset_x)
-                                .take(width)
-                                .collect::<String>();
-                            let fill = " ".repeat(width);
-                            if text_x < area.left() + area.width
-                                && draw_y < area.top() + area.height
-                            {
-                                buf.set_string(
-                                    text_x,
-                                    draw_y,
-                                    &fill,
-                                    Style::default().bg(diff_deleted_bg),
-                                );
-                                buf.set_string(
-                                    text_x,
-                                    draw_y,
-                                    &visible_text,
-                                    Style::default().bg(diff_deleted_bg),
-                                );
-                            }
-                            draw_y += 1;
-                            continue;
-                        }
-                        VisualRow::Real { line_idx, is_added } => {
-                            if self.show_line_numbers {
-                                if is_added {
-                                    buf.set_string(
-                                        area.left(),
-                                        draw_y,
-                                        " ",
-                                        Style::default().bg(diff_added_bg),
-                                    );
-                                }
-                                let line_number =
-                                    format!("{:>width$}", line_idx + 1, width = line_number_digits);
-                                buf.set_string(
-                                    area.left(),
-                                    draw_y,
-                                    &line_number,
-                                    line_number_style,
-                                );
-                            }
-                            let line_len = code.line_len(line_idx);
-                            let max_x = (area.width as usize).saturating_sub(line_number_width);
-                            let start_col = self.offset_x.min(line_len);
-                            let end_col = (start_col + max_x).min(line_len);
-                            let line_start_char = code.line_to_char(line_idx);
-                            let char_start = line_start_char + start_col;
-                            let char_end = line_start_char + end_col;
-                            let visible_chars = code.char_slice(char_start, char_end);
-                            let displayed_line = visible_chars.to_string().replace("\t", &" ");
-                            let text_x = area.left() + line_number_width as u16;
-                            if text_x < area.left() + area.width
-                                && draw_y < area.top() + area.height
-                            {
-                                if is_added {
-                                    let width =
-                                        (area.width as usize).saturating_sub(line_number_width);
-                                    let fill = " ".repeat(width);
-                                    buf.set_string(
-                                        text_x,
-                                        draw_y,
-                                        &fill,
-                                        Style::default().bg(diff_added_bg),
-                                    );
-                                    buf.set_string(
-                                        text_x,
-                                        draw_y,
-                                        &displayed_line,
-                                        Style::default().bg(diff_added_bg),
-                                    );
-                                } else {
-                                    buf.set_string(
-                                        text_x,
-                                        draw_y,
-                                        &displayed_line,
-                                        default_text_style,
-                                    );
-                                }
-                            }
-                            draw_y += 1;
-                            continue;
-                        }
-                    }
+            let row = match self.visual_row(visual_row_idx) {
+                Some(row) => row,
+                None => break,
+            };
+
+            if let VisualRow::FoldSeparator { hidden_lines, .. } = &row {
+                if self.show_line_numbers {
+                    buf.set_string(
+                        area.left(),
+                        draw_y,
+                        &format!("{:>width$}", "...", width = line_number_digits),
+                        line_number_style,
+                    );
                 }
-            }
-
-            let line_idx = visual_row_idx;
-            if line_idx >= total_lines {
-                break;
-            }
-            if self.show_line_numbers {
-                let line_number = format!("{:>width$}", line_idx + 1, width = line_number_digits);
-                buf.set_string(area.left(), draw_y, &line_number, line_number_style);
-            }
-            let line_len = code.line_len(line_idx);
-            let max_x = (area.width as usize).saturating_sub(line_number_width);
-            let start_col = self.offset_x.min(line_len);
-            let end_col = (start_col + max_x).min(line_len);
-            let line_start_char = code.line_to_char(line_idx);
-            let char_start = line_start_char + start_col;
-            let char_end = line_start_char + end_col;
-            let visible_chars = code.char_slice(char_start, char_end);
-            let displayed_line = visible_chars.to_string().replace("\t", &" ");
-            let text_x = area.left() + line_number_width as u16;
-            if text_x < area.left() + area.width && draw_y < area.top() + area.height {
-                buf.set_string(text_x, draw_y, &displayed_line, default_text_style);
-            }
-            draw_y += 1;
-        }
-
-        // draw syntax highlighting
-        if code.is_highlight() {
-            // Render syntax highlighting for the visible portion of the text buffer.
-            // For each visible line within the viewport, limit the highlighting to the
-            // visible columns to avoid expensive processing of long lines outside the view.
-            // This improves performance by only querying Tree-sitter for the visible slice,
-            // then applying styles per character based on byte ranges returned by the syntax query.
-
-            for screen_y in 0..(area.height as usize) {
-                let visual_line_idx = self.offset_y + screen_y;
-                if visual_line_idx >= total_visual_lines {
-                    break;
+                let text_x = area.left() + line_number_width as u16;
+                let text = View::fold_separator_text(*hidden_lines, self.diff_options.expand_amount);
+                let width = (area.width as usize).saturating_sub(line_number_width);
+                let visible_text = text.chars().take(width).collect::<String>();
+                if text_x < area.right() {
+                    buf.set_string(text_x, draw_y, &visible_text, fold_separator_style);
                 }
-                let Some(mut line_idx) = self.line_for_visual_row(visual_line_idx) else {
-                    continue;
+            } else {
+                let (line_idx, is_added, is_ghost) = match &row {
+                    VisualRow::Real { line_idx, is_added } => (*line_idx, *is_added, false),
+                    VisualRow::GhostDeleted { original_line_idx, .. } => (*original_line_idx, false, true),
+                    _ => unreachable!(),
                 };
-                let mut use_original_code = false;
-                let mut line_is_added = false;
-                if self.has_diff() {
-                    let Some(row) = self.visual_row(visual_line_idx) else {
-                        continue;
-                    };
-                    match row {
-                        VisualRow::Real {
-                            line_idx: idx,
-                            is_added,
-                        } => {
-                            line_idx = idx;
-                            line_is_added = is_added;
-                        }
-                        VisualRow::GhostDeleted {
-                            original_line_idx, ..
-                        } => {
-                            line_idx = original_line_idx;
-                            use_original_code = true;
-                        }
-                        VisualRow::FoldSeparator { .. } => continue,
-                    }
-                }
-
-                let source_code = if use_original_code {
+                let source_code = if is_ghost {
                     self.original_code.as_ref().unwrap_or(code)
                 } else {
                     code
                 };
 
-                let source_total_chars = source_code.len_chars();
-                let source_total_lines = source_code.len_lines();
-                if line_idx >= source_total_lines {
-                    continue;
+                // 1. Draw line numbers
+                if self.show_line_numbers {
+                    let line_number = if is_ghost {
+                        format!("{:>width$}", " ", width = line_number_digits)
+                    } else {
+                        format!("{:>width$}", line_idx + 1, width = line_number_digits)
+                    };
+                    buf.set_string(
+                        area.left(),
+                        draw_y,
+                        &line_number,
+                        line_number_style,
+                    );
                 }
+
+                let text_x = area.left() + line_number_width as u16;
+                let width = (area.width as usize).saturating_sub(line_number_width);
 
                 let line_len = source_code.line_len(line_idx);
-                let max_x = (area.width as usize).saturating_sub(line_number_width);
+                let start_col = self.offset_x.min(line_len);
+                let end_col = (start_col + width).min(line_len);
 
                 let line_start_char = source_code.line_to_char(line_idx);
-                let start_char = line_start_char + self.offset_x;
-                let visible_len = line_len.saturating_sub(self.offset_x);
-                let end = max_x.min(visible_len);
-                let end_char = start_char + end;
+                let char_slice_start = line_start_char + start_col;
+                let char_slice_end = line_start_char + end_col;
+                let visible_chars = source_code.char_slice(char_slice_start, char_slice_end);
 
-                if start_char > source_total_chars || end_char > source_total_chars {
-                    continue; // last line offset case
-                }
+                let start_byte = source_code.char_to_byte(char_slice_start);
+                let end_byte = source_code.char_to_byte(char_slice_end);
 
-                let chars = source_code.char_slice(start_char, end_char);
-
-                let start_byte = source_code.char_to_byte(start_char);
-                let end_byte = source_code.char_to_byte(end_char);
-
-                let highlights = if use_original_code {
-                    self.highlight_interval_original(start_byte, end_byte, &self.theme)
+                // Fetch highlights
+                let highlights = if code.is_highlight() {
+                    if is_ghost {
+                        self.highlight_interval_original(start_byte, end_byte, &self.theme)
+                    } else {
+                        self.highlight_interval(start_byte, end_byte, &self.theme)
+                    }
                 } else {
-                    self.highlight_interval(start_byte, end_byte, &self.theme)
+                    Vec::new()
+                };
+
+                // Base style background color
+                let base_bg = match is_ghost {
+                    true => Some(diff_deleted_bg),
+                    false if is_added => Some(diff_added_bg),
+                    false => None,
                 };
 
                 let mut x = 0;
                 let mut byte_idx_in_rope = start_byte;
+                let mut char_col = start_col;
 
-                for g in RopeGraphemes::new(&chars) {
+                // 3. Single loop over the graphemes of the line
+                for g in RopeGraphemes::new(&visible_chars) {
                     let (g_width, g_bytes) = grapheme_width_and_bytes_len(g);
+                    let (_, g_chars) = grapheme_width_and_chars_len(g);
 
-                    if x >= max_x {
+                    if x >= width {
                         break;
                     }
 
-                    let start_x = area.left() + line_number_width as u16 + x as u16;
-                    let draw_y = area.top() + screen_y as u16;
+                    let start_x = text_x + x as u16;
 
-                    for dx in 0..g_width {
-                        if x + dx >= max_x {
+                    // Compose style
+                    let mut style = if let Some(bg) = base_bg {
+                        Style::default().bg(bg)
+                    } else {
+                        default_text_style
+                    };
+
+                    // Layer A: Syntax highlights
+                    for &(start, end, s) in &highlights {
+                        if start <= byte_idx_in_rope && byte_idx_in_rope < end {
+                            style = style.patch(s);
+                            if let Some(bg) = base_bg {
+                                style = style.bg(bg); // Keep diff background
+                            }
                             break;
                         }
-                        let draw_x = start_x + dx as u16;
-                        for &(start, end, s) in &highlights {
-                            if start <= byte_idx_in_rope && byte_idx_in_rope < end {
-                                let style = if line_is_added {
-                                    s.bg(diff_added_bg)
-                                } else {
-                                    s
-                                };
-                                buf[(draw_x, draw_y)].set_style(style);
-                                break;
+                    }
+
+                    let global_char_idx = line_start_char + char_col;
+
+                    if !is_ghost {
+                        // Layer B: Selection
+                        if let Some(selection) = self.selection && !selection.is_empty() {
+                            let start = selection.start.min(selection.end);
+                            let end = selection.start.max(selection.end);
+                            if global_char_idx >= start && global_char_idx < end {
+                                style = style.bg(Color::DarkGray);
                             }
                         }
+
+                        // Layer C: Marks
+                        if let Some(ref marks) = self.marks {
+                            for &(m_start, m_end, m_color) in marks {
+                                if global_char_idx >= m_start && global_char_idx < m_end {
+                                    style = style.bg(m_color);
+                                }
+                            }
+                        }
+                    }
+
+                    // Draw character
+                    let display_g = g.to_string().replace('\t', " ");
+                    if start_x < area.right() {
+                        buf.set_string(start_x, draw_y, &display_g, style);
                     }
 
                     x = x.saturating_add(g_width);
                     byte_idx_in_rope += g_bytes;
-                }
-            }
-        }
-
-        // draw selection
-        if let Some(selection) = self.selection
-            && !selection.is_empty()
-        {
-            let start = selection.start.min(selection.end);
-            let end = selection.start.max(selection.end);
-
-            let start_line = code.char_to_line(start);
-            let end_line = code.char_to_line(end);
-
-            for line_idx in start_line..=end_line {
-                let visual_line_idx = self.visual_line_idx(line_idx);
-                if visual_line_idx < self.offset_y {
-                    continue;
-                }
-                if visual_line_idx >= self.offset_y + area.height as usize {
-                    break;
-                }
-
-                let line_start_char = code.line_to_char(line_idx);
-                let line_len = code.line_len(line_idx);
-                let line_end_char = line_start_char + line_len;
-
-                let sel_start = start.max(line_start_char);
-                let sel_end = end.min(line_end_char);
-
-                let rel_start = sel_start - line_start_char;
-                let rel_end = sel_end - line_start_char;
-
-                let start_col = self.offset_x.min(line_len);
-                let max_text_width = (area.width as usize).saturating_sub(line_number_width);
-                let end_col = (start_col + max_text_width).min(line_len);
-
-                let char_slice_start = line_start_char + start_col;
-                let char_slice_end = line_start_char + end_col;
-
-                let visible_chars = code.char_slice(char_slice_start, char_slice_end);
-
-                let draw_y = area.top() + (visual_line_idx - self.offset_y) as u16;
-                let mut visual_x: u16 = 0;
-                let mut char_col = start_col;
-
-                for g in RopeGraphemes::new(&visible_chars) {
-                    let (g_width, g_chars) = grapheme_width_and_chars_len(g);
-
-                    if char_col < rel_end && char_col + g_chars > rel_start {
-                        let start_x = area.left() + line_number_width as u16 + visual_x;
-                        for dx in 0..g_width as u16 {
-                            let draw_x = start_x + dx;
-                            if draw_x < area.right() && draw_y < area.bottom() {
-                                buf[(draw_x, draw_y)]
-                                    .set_style(Style::default().bg(Color::DarkGray));
-                            }
-                        }
-                    }
-
-                    visual_x = visual_x.saturating_add(g_width as u16);
                     char_col += g_chars;
                 }
-            }
-        }
 
-        // draw marks
-        if let Some(ref marks) = self.marks {
-            for &(start, end, color) in marks {
-                if start >= end || end > total_chars {
-                    continue;
-                }
-
-                let start_line = code.char_to_line(start);
-                let end_line = code.char_to_line(end);
-
-                for line_idx in start_line..=end_line {
-                    let visual_line_idx = self.visual_line_idx(line_idx);
-                    if visual_line_idx < self.offset_y
-                        || visual_line_idx >= self.offset_y + area.height as usize
-                    {
-                        continue;
-                    }
-
-                    let line_start_char = code.line_to_char(line_idx);
-                    let line_len = code.line_len(line_idx);
-                    let line_end_char = line_start_char + line_len;
-
-                    let highlight_start = start.max(line_start_char);
-                    let highlight_end = end.min(line_end_char);
-
-                    let rel_start = highlight_start - line_start_char;
-                    let rel_end = highlight_end - line_start_char;
-
-                    let start_col = self.offset_x.min(line_len);
-                    let max_text_width = (area.width as usize).saturating_sub(line_number_width);
-                    let end_col = (start_col + max_text_width).min(line_len);
-
-                    let char_slice_start = line_start_char + start_col;
-                    let char_slice_end = line_start_char + end_col;
-
-                    let visible_chars = code.char_slice(char_slice_start, char_slice_end);
-                    let draw_y = area.top() + (visual_line_idx - self.offset_y) as u16;
-                    let mut visual_x: u16 = 0;
-                    let mut char_col = start_col;
-
-                    for g in RopeGraphemes::new(&visible_chars) {
-                        let (g_width, g_chars) = grapheme_width_and_chars_len(g);
-
-                        if char_col < rel_end && char_col + g_chars > rel_start {
-                            let start_x = area.left() + line_number_width as u16 + visual_x;
-                            for dx in 0..g_width as u16 {
-                                let draw_x = start_x + dx;
-                                if draw_x < area.right() && draw_y < area.bottom() {
-                                    buf[(draw_x, draw_y)].set_bg(color);
-                                }
-                            }
-                        }
-
-                        visual_x = visual_x.saturating_add(g_width as u16);
-                        char_col += g_chars;
-                    }
+                // 4. Fill remaining width with background if needed
+                if let Some(bg) = base_bg && x < width && text_x + (x as u16) < area.right() {
+                    let fill_x = text_x + (x as u16);
+                    let fill_width = width - x;
+                    buf.set_string(
+                        fill_x,
+                        draw_y,
+                        &" ".repeat(fill_width),
+                        Style::default().bg(bg),
+                    );
                 }
             }
+            draw_y += 1;
         }
     }
 }

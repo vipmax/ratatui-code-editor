@@ -13,6 +13,24 @@ use ratatui_code_editor::theme::vesper;
 use ratatui_code_editor::utils::get_lang;
 use std::io::stdout;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EditMode {
+    Plain,
+    Diff,
+    Combine,
+}
+
+impl EditMode {
+    fn next(self) -> Self {
+        match self {
+            EditMode::Plain => EditMode::Diff,
+            EditMode::Diff => EditMode::Combine,
+            EditMode::Combine => EditMode::Plain,
+        }
+    }
+}
+
+// cargo run --release -p diff_editor -- src/editor.rs
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
@@ -34,7 +52,8 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut editor = Editor::new(&language, &content, vesper())?;
-    editor.set_diff_enabled(true);
+    let mut edit_mode = EditMode::Combine;
+    apply_mode(&mut editor, edit_mode);
     if let Some(original) = read_file_from_head(filename)? {
         editor.set_original_code(&original)?;
     } else {
@@ -63,8 +82,10 @@ fn main() -> Result<()> {
                         break;
                     } else if is_save_pressed(key) {
                         save_to_file(&editor.get_content(), filename)?;
-                    } else if is_focus_diff_pressed(key) {
-                        editor.toggle_diff_focus();
+                    } else if is_cycle_edit_mode_pressed(key) {
+                        edit_mode = edit_mode.next();
+                        apply_mode(&mut editor, edit_mode);
+                        editor.focus(&editor_area);
                     } else {
                         editor.input(key, &editor_area)?;
                     }
@@ -120,6 +141,24 @@ fn is_save_pressed(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s')
 }
 
-fn is_focus_diff_pressed(key: KeyEvent) -> bool {
+fn is_cycle_edit_mode_pressed(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('f')
+}
+
+fn apply_mode(editor: &mut Editor, mode: EditMode) {
+    match mode {
+        EditMode::Plain => {
+            editor.set_diff_enabled(false);
+            editor.set_diff_focus_enabled(false);
+        }
+        EditMode::Diff => {
+            editor.set_diff_enabled(true);
+            editor.set_diff_focus_context(3);
+            editor.set_diff_focus_enabled(true);
+        }
+        EditMode::Combine => {
+            editor.set_diff_enabled(true);
+            editor.set_diff_focus_enabled(false);
+        }
+    }
 }

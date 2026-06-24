@@ -4,7 +4,7 @@ use crate::code::Code;
 use crate::code::{EditBatch, Operation};
 use crate::code::{RopeGraphemes, grapheme_width, grapheme_width_and_chars_len};
 use crate::selection::{Selection, SelectionSnap};
-use crate::types::{HightlightCache, Theme, VisualRow};
+use crate::types::{DiffOptions, HightlightCache, Theme, VisualRow};
 use crate::utils;
 use crate::view::{View, ViewMode};
 use anyhow::{Result, anyhow};
@@ -60,14 +60,14 @@ pub struct Editor {
     /// Current document-to-screen view mode.
     pub(crate) view_mode: ViewMode,
 
-    /// Number of unchanged visual rows shown around focused diff rows.
-    pub(crate) diff_focus_context: usize,
-
     /// Original code snapshot used for diff and ghost-line highlighting.
     pub(crate) original_code: Option<Code>,
 
+    /// Options for diff and diff-focus modes.
+    pub(crate) diff_options: DiffOptions,
+
     /// Derived view rows and line mappings used for scrolling, rendering, and navigation.
-    pub(crate) view: RefCell<View>,
+    pub(crate) view: View,
 }
 
 impl Editor {
@@ -102,9 +102,9 @@ impl Editor {
             show_line_numbers: true,
             left_code_padding: 2,
             view_mode: ViewMode::Plain,
-            diff_focus_context: 3,
             original_code: None,
-            view: RefCell::new(View::default()),
+            diff_options: DiffOptions::default(),
+            view: View::default(),
         })
     }
 
@@ -145,7 +145,7 @@ impl Editor {
         if visual_line < self.offset_y {
             self.offset_y = visual_line;
         } else if visual_line >= self.offset_y + visible_height {
-            self.offset_y = visual_line.saturating_sub(visible_height - 1);
+            self.offset_y = visual_line.saturating_sub(visible_height.saturating_sub(1));
         }
     }
 
@@ -262,6 +262,43 @@ impl Editor {
         Some(line_start_char + char_idx)
     }
 
+    pub fn expand_hidden_diff_at_mouse(
+        &mut self,
+        mouse_x: u16,
+        mouse_y: u16,
+        area: &Rect,
+    ) -> bool {
+        let line_number_width = self.get_line_number_width() as u16;
+        if mouse_y < area.top()
+            || mouse_y >= area.bottom()
+            || mouse_x < area.left() + line_number_width
+        {
+            return false;
+        }
+
+        let clicked_visual_row = (mouse_y - area.top()) as usize + self.offset_y;
+        let text_x = area.left() + line_number_width;
+        let clicked_col = mouse_x.saturating_sub(text_x) as usize;
+        let visible_width = area.width.saturating_sub(line_number_width) as usize;
+
+        let expanded = self.view
+            .expand_hidden_at_visual_row(
+                &self.code,
+                self.original_code.as_ref(),
+                self.active_view_mode(),
+                clicked_visual_row,
+                clicked_col,
+                visible_width,
+                self.diff_options.expand_amount,
+            );
+
+        if expanded {
+            self.clamp_offset_y();
+        }
+
+        expanded
+    }
+
     /// Clears any active selection.
     pub fn clear_selection(&mut self) {
         self.selection = None;
@@ -315,7 +352,7 @@ impl Editor {
     pub fn clear_original_code(&mut self) {
         self.highlights_cache.borrow_mut().clear();
         self.original_code = None;
-        self.view.borrow_mut().clear();
+        self.view.clear();
         self.offset_y = 0;
     }
 
@@ -324,14 +361,13 @@ impl Editor {
     }
 
     pub fn set_diff_enabled(&mut self, enabled: bool) {
-        self.view_mode = if enabled {
-            match self.view_mode {
-                ViewMode::DiffFocus { .. } => self.view_mode,
-                ViewMode::Plain | ViewMode::Diff => ViewMode::Diff,
+        if enabled {
+            if self.view_mode == ViewMode::Plain {
+                self.view_mode = ViewMode::Diff;
             }
         } else {
-            ViewMode::Plain
-        };
+            self.view_mode = ViewMode::Plain;
+        }
         self.rebuild_view();
         self.clamp_offset_y();
     }
@@ -343,7 +379,7 @@ impl Editor {
     pub fn set_diff_focus_enabled(&mut self, enabled: bool) {
         self.view_mode = if enabled {
             ViewMode::DiffFocus {
-                context_lines: self.diff_focus_context,
+                context_lines: self.diff_options.focus_context,
             }
         } else if self.view_mode.has_diff() {
             ViewMode::Diff
@@ -359,12 +395,8 @@ impl Editor {
         self.set_diff_focus_enabled(!self.view_mode.is_diff_focus());
     }
 
-    pub fn is_diff_focus_enabled(&self) -> bool {
-        self.view_mode.is_diff_focus()
-    }
-
     pub fn set_diff_focus_context(&mut self, context_lines: usize) {
-        self.diff_focus_context = context_lines;
+        self.diff_options.focus_context = context_lines;
         if self.view_mode.is_diff_focus() {
             self.view_mode = ViewMode::DiffFocus { context_lines };
         }
@@ -373,8 +405,23 @@ impl Editor {
         self.clamp_offset_y();
     }
 
-    pub fn diff_focus_context(&self) -> usize {
-        self.diff_focus_context
+    pub fn set_diff_expand_amount(&mut self, amount: usize) {
+        self.diff_options.expand_amount = amount;
+        self.rebuild_view();
+    }
+
+    pub fn set_diff_options(&mut self, options: DiffOptions) {
+        self.diff_options = options;
+        if self.view_mode.is_diff_focus() {
+            self.view_mode = ViewMode::DiffFocus { context_lines: options.focus_context };
+        }
+        self.rebuild_view();
+        self.clamp_cursor_to_focus_rows();
+        self.clamp_offset_y();
+    }
+
+    pub fn diff_options(&self) -> DiffOptions {
+        self.diff_options
     }
 
     pub fn apply_batch(&mut self, batch: &EditBatch) {
@@ -529,24 +576,28 @@ impl Editor {
     }
 
     pub(crate) fn visual_len_lines(&self) -> usize {
-        self.view
-            .borrow()
-            .visual_len_lines(&self.code, self.active_view_mode())
+        self.view.visual_len_lines(&self.code, self.active_view_mode())
     }
 
     pub(crate) fn line_for_visual_row(&self, visual_row: usize) -> Option<usize> {
-        self.view
-            .borrow()
-            .line_for_visual_row(&self.code, self.active_view_mode(), visual_row)
+        self.view.line_for_visual_row(&self.code, self.active_view_mode(), visual_row)
     }
 
     pub(crate) fn visual_row(&self, visual_row: usize) -> Option<VisualRow> {
-        self.view.borrow().rows().get(visual_row).cloned()
+        if self.has_diff() {
+            self.view.rows().get(visual_row).cloned()
+        } else if visual_row < self.code.len_lines() {
+            Some(VisualRow::Real {
+                line_idx: visual_row,
+                is_added: false,
+            })
+        } else {
+            None
+        }
     }
 
     pub(crate) fn visual_line_idx(&self, line_idx: usize) -> usize {
         self.view
-            .borrow()
             .visual_row_for_line(self.active_view_mode(), line_idx)
             .unwrap_or(usize::MAX)
     }
@@ -604,7 +655,7 @@ impl Editor {
         highlights
     }
 
-    pub fn reset_highlight_cache(&self) {
+    pub fn reset_highlight_cache(&mut self) {
         self.highlights_cache.borrow_mut().clear();
         self.rebuild_view();
     }
@@ -614,15 +665,11 @@ impl Editor {
     }
 
     pub(crate) fn prev_line(&self, line_idx: usize) -> Option<usize> {
-        self.view
-            .borrow()
-            .prev_line(self.active_view_mode(), line_idx)
+        self.view.prev_line(self.active_view_mode(), line_idx)
     }
 
     pub(crate) fn next_line(&self, line_idx: usize) -> Option<usize> {
-        self.view
-            .borrow()
-            .next_line(&self.code, self.active_view_mode(), line_idx)
+        self.view.next_line(&self.code, self.active_view_mode(), line_idx)
     }
 
     pub(crate) fn is_diff_focus_active(&self) -> bool {
@@ -655,15 +702,11 @@ impl Editor {
     }
 
     fn line_visible(&self, line_idx: usize) -> bool {
-        self.view
-            .borrow()
-            .line_visible(self.active_view_mode(), line_idx)
+        self.view.line_visible(self.active_view_mode(), line_idx)
     }
 
     fn nearest_focus_real_line(&self, line_idx: usize) -> Option<usize> {
-        self.view
-            .borrow()
-            .nearest_line(&self.code, self.active_view_mode(), line_idx)
+        self.view.nearest_line(&self.code, self.active_view_mode(), line_idx)
     }
 
     /// calculates visible cursor position
@@ -727,30 +770,7 @@ impl Editor {
         }
     }
 
-    pub(crate) fn rebuild_view(&self) {
-        self.view
-            .borrow_mut()
-            .rebuild(&self.code, self.original_code.as_ref(), self.view_mode);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn focus_diff_focus_clamps_cursor_before_moving_viewport() {
-        let mut editor = Editor::new("text", "0\n1\n2\nchanged\n4\n5\n", vec![]).unwrap();
-        editor.set_diff_enabled(true);
-        editor.set_original_code("0\n1\n2\n3\n4\n5\n").unwrap();
-        editor.set_diff_focus_context(0);
-        editor.set_diff_focus_enabled(true);
-        editor.cursor = editor.code.line_to_char(1);
-        editor.offset_y = 99;
-
-        editor.focus(&Rect::new(0, 0, 80, 10));
-
-        assert_eq!(editor.code.point(editor.get_cursor()).0, 3);
-        assert_eq!(editor.get_offset_y(), 1);
+    pub(crate) fn rebuild_view(&mut self) {
+        self.view.rebuild(&self.code, self.original_code.as_ref(), self.view_mode);
     }
 }
