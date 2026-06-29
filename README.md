@@ -249,6 +249,12 @@ The editor is built with several key components:
 - `arboard` - Clipboard access
 - `unicode-width`, `unicode-segmentation` - Unicode text width calculation
 
+## Built With This Widget
+
+- [redai](https://github.com/vipmax/redai) - a terminal AI code editor built on top of `ratatui-code-editor`.
+
+Using `ratatui-code-editor` in your own project? Feel free to open a PR and add it to this list.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests.
