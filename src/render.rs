@@ -26,14 +26,23 @@ impl Widget for &Editor {
         let max_line_number = total_lines.max(1);
         let line_number_digits = max_line_number.to_string().len().max(5);
         let line_number_width = self.get_line_number_width();
+        let fold_gutter_width = self.fold_gutter_width();
         let total_visual_lines = self.visual_len_lines();
         let mut draw_y = area.top();
 
         let line_number_style = Style::default().fg(Color::DarkGray);
         let default_text_style = Style::default().fg(Color::White);
 
-        let diff_added_bg = self.theme.get("diff_added").and_then(|s| s.fg).unwrap_or(Color::Rgb(30, 90, 55));
-        let diff_deleted_bg = self.theme.get("diff_deleted").and_then(|s| s.fg).unwrap_or(Color::Rgb(217, 75, 75));
+        let diff_added_bg = self
+            .theme
+            .get("diff_added")
+            .and_then(|s| s.fg)
+            .unwrap_or(Color::Rgb(30, 90, 55));
+        let diff_deleted_bg = self
+            .theme
+            .get("diff_deleted")
+            .and_then(|s| s.fg)
+            .unwrap_or(Color::Rgb(217, 75, 75));
 
         let fold_separator_style = Style::default().fg(Color::DarkGray);
 
@@ -58,7 +67,8 @@ impl Widget for &Editor {
                     );
                 }
                 let text_x = area.left() + line_number_width as u16;
-                let text = View::fold_separator_text(*hidden_lines, self.diff_options.expand_amount);
+                let text =
+                    View::fold_separator_text(*hidden_lines, self.diff_options.expand_amount);
                 let width = (area.width as usize).saturating_sub(line_number_width);
                 let visible_text = text.chars().take(width).collect::<String>();
                 if text_x < area.right() {
@@ -67,7 +77,9 @@ impl Widget for &Editor {
             } else {
                 let (line_idx, is_added, is_ghost) = match &row {
                     VisualRow::Real { line_idx, is_added } => (*line_idx, *is_added, false),
-                    VisualRow::GhostDeleted { original_line_idx, .. } => (*original_line_idx, false, true),
+                    VisualRow::GhostDeleted {
+                        original_line_idx, ..
+                    } => (*original_line_idx, false, true),
                     _ => unreachable!(),
                 };
                 let source_code = if is_ghost {
@@ -83,12 +95,22 @@ impl Widget for &Editor {
                     } else {
                         format!("{:>width$}", line_idx + 1, width = line_number_digits)
                     };
-                    buf.set_string(
-                        area.left(),
-                        draw_y,
-                        &line_number,
-                        line_number_style,
-                    );
+                    buf.set_string(area.left(), draw_y, &line_number, line_number_style);
+                }
+                if !is_ghost {
+                    if let Some(collapsed) = self.code_fold_indicator(line_idx) {
+                        let indicator = if collapsed {
+                            &self.code_folding_options.indicators.collapsed
+                        } else {
+                            &self.code_folding_options.indicators.expanded
+                        };
+                        buf.set_string(
+                            area.left() + (line_number_width - fold_gutter_width) as u16,
+                            draw_y,
+                            indicator,
+                            line_number_style,
+                        );
+                    }
                 }
 
                 let text_x = area.left() + line_number_width as u16;
@@ -161,7 +183,9 @@ impl Widget for &Editor {
 
                     if !is_ghost {
                         // Layer B: Selection
-                        if let Some(selection) = self.selection && !selection.is_empty() {
+                        if let Some(selection) = self.selection
+                            && !selection.is_empty()
+                        {
                             let start = selection.start.min(selection.end);
                             let end = selection.start.max(selection.end);
                             if global_char_idx >= start && global_char_idx < end {
@@ -191,7 +215,10 @@ impl Widget for &Editor {
                 }
 
                 // 4. Fill remaining width with background if needed
-                if let Some(bg) = base_bg && x < width && text_x + (x as u16) < area.right() {
+                if let Some(bg) = base_bg
+                    && x < width
+                    && text_x + (x as u16) < area.right()
+                {
                     let fill_x = text_x + (x as u16);
                     let fill_width = width - x;
                     buf.set_string(

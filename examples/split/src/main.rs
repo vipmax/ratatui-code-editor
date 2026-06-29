@@ -1,21 +1,15 @@
-use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, 
-        Event, KeyCode,
-    },
-    execute,
-    terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, 
-        disable_raw_mode, enable_raw_mode
-    },
-};
-use ratatui::{Terminal, backend::CrosstermBackend};
-use ratatui::layout::{Layout, Constraint, Direction, Rect, Position};
-use ratatui::widgets::{Block, Borders};
 use crossterm::event::MouseEvent;
-use std::io::stdout;
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
+use ratatui::widgets::{Block, Borders};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::theme::vesper;
+use std::io::stdout;
 
 fn main() -> anyhow::Result<()> {
     let filename1 = "src/code.rs";
@@ -30,14 +24,14 @@ fn main() -> anyhow::Result<()> {
 
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
-    
+
     let theme = vesper();
 
     let mut editor1 = Editor::new(&language, &content1, theme.clone())?;
     let mut editor2 = Editor::new(&language, &content2, theme)?;
 
-    let mut editor1_area = ratatui::layout::Rect::default(); 
-    let mut editor2_area = ratatui::layout::Rect::default(); 
+    let mut editor1_area = ratatui::layout::Rect::default();
+    let mut editor2_area = ratatui::layout::Rect::default();
 
     let mut active_editor = 0;
 
@@ -45,18 +39,11 @@ fn main() -> anyhow::Result<()> {
         terminal.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(50),
-                    Constraint::Percentage(50)
-                ])
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                 .split(f.area());
 
-            let block1 = Block::default()
-                .title(filename1)
-                .borders(Borders::ALL);
-            let block2 = Block::default()
-                .title(filename2)
-                .borders(Borders::ALL);
+            let block1 = Block::default().title(filename1).borders(Borders::ALL);
+            let block2 = Block::default().title(filename2).borders(Borders::ALL);
 
             editor1_area = block1.inner(chunks[0]);
             editor2_area = block2.inner(chunks[1]);
@@ -65,13 +52,13 @@ fn main() -> anyhow::Result<()> {
             f.render_widget(block2, chunks[1]);
             f.render_widget(&editor1, editor1_area);
             f.render_widget(&editor2, editor2_area);
-            
+
             let cursor = match active_editor {
                 0 => editor1.get_visible_cursor(&editor1_area),
                 _ => editor2.get_visible_cursor(&editor2_area),
             };
-            
-            if let Some((x,y)) = cursor {
+
+            if let Some((x, y)) = cursor {
                 f.set_cursor_position(Position::new(x, y));
             }
         })?;
@@ -92,7 +79,9 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 Event::Mouse(mouse) => {
-                    if let Some(new_active) = detect_active_editor(&mouse, editor1_area, editor2_area) {
+                    if let Some(new_active) =
+                        detect_active_editor(&mouse, editor1_area, editor2_area)
+                    {
                         active_editor = new_active;
                     }
 
@@ -101,7 +90,7 @@ fn main() -> anyhow::Result<()> {
                         1 => editor2.mouse(mouse, &editor2_area)?,
                         _ => {}
                     }
-                },
+                }
 
                 Event::Resize(_, _) => {}
                 _ => {}
@@ -119,9 +108,9 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn detect_active_editor(
-    mouse: &MouseEvent, 
-    editor1_area: Rect, 
-    editor2_area: Rect
+    mouse: &MouseEvent,
+    editor1_area: Rect,
+    editor2_area: Rect,
 ) -> Option<usize> {
     let x = mouse.column;
     let y = mouse.row;
@@ -136,8 +125,5 @@ fn detect_active_editor(
 }
 
 fn rect_contains(rect: Rect, x: u16, y: u16) -> bool {
-    x >= rect.x &&
-    x < rect.x + rect.width &&
-    y >= rect.y &&
-    y < rect.y + rect.height
+    x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
 }

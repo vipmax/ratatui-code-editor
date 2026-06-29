@@ -4,7 +4,7 @@ use crate::code::Code;
 use crate::code::{EditBatch, Operation};
 use crate::code::{RopeGraphemes, grapheme_width, grapheme_width_and_chars_len};
 use crate::selection::{Selection, SelectionSnap};
-use crate::types::{DiffOptions, HightlightCache, Theme, VisualRow};
+use crate::types::{CodeFoldingOptions, DiffOptions, HightlightCache, Theme, VisualRow};
 use crate::utils;
 use crate::view::{View, ViewMode};
 use anyhow::{Result, anyhow};
@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time::Duration;
+use unicode_width::UnicodeWidthStr;
 
 /// Represents the text editor, which holds the code buffer, cursor, selection,
 /// theme, scroll offsets, highlight cache, clipboard, and user mark intervals.
@@ -54,6 +55,9 @@ pub struct Editor {
     /// Controls when to show the line numbers
     pub(crate) show_line_numbers: bool,
 
+    /// Controls whether the code-fold gutter is shown and interactive.
+    pub(crate) code_folding_options: CodeFoldingOptions,
+
     /// Controls the left padding before writing the code
     pub(crate) left_code_padding: usize,
 
@@ -86,6 +90,7 @@ impl Editor {
 
         let theme = Self::build_theme(&theme);
         let highlights_cache = RefCell::new(HashMap::new());
+        let view = View::new(&code, ViewMode::Plain);
 
         Ok(Self {
             code,
@@ -100,28 +105,32 @@ impl Editor {
             marks: None,
             highlights_cache,
             show_line_numbers: true,
+            code_folding_options: CodeFoldingOptions::default(),
             left_code_padding: 2,
             view_mode: ViewMode::Plain,
             original_code: None,
             diff_options: DiffOptions::default(),
-            view: View::default(),
+            view,
         })
     }
 
     pub(crate) fn get_line_number_width(&self) -> usize {
+        let fold_gutter_width = self.fold_gutter_width();
         if self.show_line_numbers {
             let total_lines = self.code.len_lines();
             let max_line_number = total_lines.max(1);
             let line_number_digits = max_line_number.to_string().len().max(5);
-            (line_number_digits + self.left_code_padding) as usize
+            line_number_digits + self.left_code_padding + fold_gutter_width
         } else {
-            self.left_code_padding
+            self.left_code_padding + fold_gutter_width
         }
     }
 
     pub fn focus(&mut self, area: &Rect) {
         self.fit_cursor();
-        self.clamp_cursor_to_focus_rows();
+        if self.is_diff_focus_active() {
+            self.clamp_cursor_to_focus_rows();
+        }
         self.clamp_offset_y();
 
         let width = area.width as usize;
@@ -130,7 +139,6 @@ impl Editor {
 
         let line = self.code.char_to_line(self.cursor);
         let col = self.cursor - self.code.line_to_char(line);
-        let visual_line = self.visual_line_idx(line);
 
         let visible_width = width.saturating_sub(line_number_width);
         let visible_height = height;
@@ -140,6 +148,11 @@ impl Editor {
             self.offset_x = col.saturating_sub(step_size);
         } else if col >= self.offset_x + visible_width {
             self.offset_x = col.saturating_sub(visible_width.saturating_sub(step_size));
+        }
+
+        let visual_line = self.visual_line_idx(line);
+        if visual_line == usize::MAX {
+            return;
         }
 
         if visual_line < self.offset_y {
@@ -262,12 +275,38 @@ impl Editor {
         Some(line_start_char + char_idx)
     }
 
-    pub fn expand_hidden_diff_at_mouse(
-        &mut self,
-        mouse_x: u16,
-        mouse_y: u16,
-        area: &Rect,
-    ) -> bool {
+    pub(crate) fn toggle_fold_at_mouse(&mut self, mouse_x: u16, mouse_y: u16, area: &Rect) -> bool {
+        if !self.is_code_folding_enabled() {
+            return false;
+        }
+
+        let line_number_width = self.get_line_number_width();
+        let fold_gutter_width = self.fold_gutter_width();
+        let Some(fold_gutter_start) = line_number_width.checked_sub(fold_gutter_width) else {
+            return false;
+        };
+
+        if mouse_x < area.left() + fold_gutter_start as u16
+            || mouse_x >= area.left() + line_number_width as u16
+            || mouse_y < area.top()
+            || mouse_y >= area.bottom()
+        {
+            return false;
+        }
+
+        let visual_row = self.offset_y + (mouse_y - area.top()) as usize;
+        let Some(line) = self.line_for_visual_row(visual_row) else {
+            return false;
+        };
+
+        self.toggle_fold_at_line(line)
+    }
+
+    pub fn expand_hidden_diff_at_mouse(&mut self, mouse_x: u16, mouse_y: u16, area: &Rect) -> bool {
+        if !self.is_diff_focus_active() {
+            return false;
+        }
+
         let line_number_width = self.get_line_number_width() as u16;
         if mouse_y < area.top()
             || mouse_y >= area.bottom()
@@ -281,16 +320,15 @@ impl Editor {
         let clicked_col = mouse_x.saturating_sub(text_x) as usize;
         let visible_width = area.width.saturating_sub(line_number_width) as usize;
 
-        let expanded = self.view
-            .expand_hidden_at_visual_row(
-                &self.code,
-                self.original_code.as_ref(),
-                self.active_view_mode(),
-                clicked_visual_row,
-                clicked_col,
-                visible_width,
-                self.diff_options.expand_amount,
-            );
+        let expanded = self.view.expand_hidden_at_visual_row(
+            &self.code,
+            self.original_code.as_ref(),
+            self.active_view_mode(),
+            clicked_visual_row,
+            clicked_col,
+            visible_width,
+            self.diff_options.expand_amount,
+        );
 
         if expanded {
             self.clamp_offset_y();
@@ -352,8 +390,8 @@ impl Editor {
     pub fn clear_original_code(&mut self) {
         self.highlights_cache.borrow_mut().clear();
         self.original_code = None;
-        self.view.clear();
-        self.offset_y = 0;
+        self.rebuild_view();
+        self.clamp_offset_y();
     }
 
     pub fn has_diff(&self) -> bool {
@@ -413,7 +451,9 @@ impl Editor {
     pub fn set_diff_options(&mut self, options: DiffOptions) {
         self.diff_options = options;
         if self.view_mode.is_diff_focus() {
-            self.view_mode = ViewMode::DiffFocus { context_lines: options.focus_context };
+            self.view_mode = ViewMode::DiffFocus {
+                context_lines: options.focus_context,
+            };
         }
         self.rebuild_view();
         self.clamp_cursor_to_focus_rows();
@@ -452,7 +492,79 @@ impl Editor {
     pub fn set_cursor(&mut self, cursor: usize) {
         self.cursor = cursor;
         self.fit_cursor();
-        self.clamp_cursor_to_focus_rows();
+    }
+
+    /// Toggles the Rust Tree-sitter fold that begins on `line_idx`.
+    pub fn toggle_fold_at_line(&mut self, line_idx: usize) -> bool {
+        if !self.code_folding_options.enabled {
+            return false;
+        }
+        let top_line = self.line_for_visual_row(self.offset_y);
+        let toggled = self.view.toggle_code_fold(
+            &self.code,
+            self.original_code.as_ref(),
+            self.active_view_mode(),
+            line_idx,
+        );
+        if toggled {
+            if let Some(top_line) = top_line {
+                let visual_line = self.visual_line_idx(top_line);
+                if visual_line != usize::MAX {
+                    self.offset_y = visual_line;
+                }
+            }
+            self.clamp_offset_y();
+        }
+        toggled
+    }
+
+    pub fn toggle_fold_at_cursor(&mut self) -> bool {
+        let line_idx = self.code.char_to_line(self.cursor);
+        self.toggle_fold_at_line(line_idx)
+    }
+
+    pub fn set_code_folding_enabled(&mut self, enabled: bool) {
+        self.code_folding_options.enabled = enabled;
+        if !enabled {
+            self.view.clear_code_folds();
+        }
+        self.rebuild_view();
+    }
+
+    pub fn is_code_folding_enabled(&self) -> bool {
+        self.code_folding_options.enabled
+    }
+
+    pub fn set_code_folding_options(&mut self, options: CodeFoldingOptions) {
+        let enabled = options.enabled;
+        self.code_folding_options = options;
+        if !enabled {
+            self.view.clear_code_folds();
+        }
+        self.rebuild_view();
+    }
+
+    pub fn code_folding_options(&self) -> CodeFoldingOptions {
+        self.code_folding_options.clone()
+    }
+
+    pub(crate) fn fold_gutter_width(&self) -> usize {
+        if !self.code_folding_options.enabled {
+            return 0;
+        }
+        self.code_folding_options
+            .indicators
+            .expanded
+            .width()
+            .max(self.code_folding_options.indicators.collapsed.width())
+            + 1
+    }
+
+    pub(crate) fn code_fold_indicator(&self, line_idx: usize) -> Option<bool> {
+        self.code_folding_options
+            .enabled
+            .then(|| self.view.code_fold_indicator(&self.code, line_idx))
+            .flatten()
     }
 
     pub fn fit_cursor(&mut self) {
@@ -576,15 +688,17 @@ impl Editor {
     }
 
     pub(crate) fn visual_len_lines(&self) -> usize {
-        self.view.visual_len_lines(&self.code, self.active_view_mode())
+        self.view
+            .visual_len_lines(&self.code, self.active_view_mode())
     }
 
     pub(crate) fn line_for_visual_row(&self, visual_row: usize) -> Option<usize> {
-        self.view.line_for_visual_row(&self.code, self.active_view_mode(), visual_row)
+        self.view
+            .line_for_visual_row(&self.code, self.active_view_mode(), visual_row)
     }
 
     pub(crate) fn visual_row(&self, visual_row: usize) -> Option<VisualRow> {
-        if self.has_diff() {
+        if self.has_diff() || !self.view.rows().is_empty() {
             self.view.rows().get(visual_row).cloned()
         } else if visual_row < self.code.len_lines() {
             Some(VisualRow::Real {
@@ -669,18 +783,16 @@ impl Editor {
     }
 
     pub(crate) fn next_line(&self, line_idx: usize) -> Option<usize> {
-        self.view.next_line(&self.code, self.active_view_mode(), line_idx)
+        self.view
+            .next_line(&self.code, self.active_view_mode(), line_idx)
     }
 
     pub(crate) fn is_diff_focus_active(&self) -> bool {
         self.has_diff() && self.view_mode.is_diff_focus()
     }
 
-    fn clamp_cursor_to_focus_rows(&mut self) {
-        if !self.is_diff_focus_active() {
-            return;
-        }
-
+    pub(crate) fn clamp_cursor_to_focus_rows(&mut self) {
+        let clear_selection = self.is_diff_focus_active();
         let (cursor_line, cursor_char_col) = self.code.point(self.cursor);
         if self.line_visible(cursor_line) {
             return;
@@ -698,15 +810,18 @@ impl Editor {
             .min(target_len);
 
         self.cursor = target_start + target_col;
-        self.clear_selection();
+        if clear_selection {
+            self.clear_selection();
+        }
     }
 
-    fn line_visible(&self, line_idx: usize) -> bool {
+    pub(crate) fn line_visible(&self, line_idx: usize) -> bool {
         self.view.line_visible(self.active_view_mode(), line_idx)
     }
 
     fn nearest_focus_real_line(&self, line_idx: usize) -> Option<usize> {
-        self.view.nearest_line(&self.code, self.active_view_mode(), line_idx)
+        self.view
+            .nearest_line(&self.code, self.active_view_mode(), line_idx)
     }
 
     /// calculates visible cursor position
@@ -771,6 +886,10 @@ impl Editor {
     }
 
     pub(crate) fn rebuild_view(&mut self) {
-        self.view.rebuild(&self.code, self.original_code.as_ref(), self.view_mode);
+        self.view.rebuild(
+            &self.code,
+            self.original_code.as_ref(),
+            self.active_view_mode(),
+        );
     }
 }

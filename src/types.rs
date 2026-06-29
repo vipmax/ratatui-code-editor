@@ -49,3 +49,45 @@ impl Default for DiffOptions {
         }
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FoldIndicators {
+    pub expanded: String,
+    pub collapsed: String,
+}
+
+impl FoldIndicators {
+    pub fn unicode() -> Self {
+        Self {
+            expanded: "▼".into(),
+            collapsed: "▶".into(),
+        }
+    }
+    pub fn ascii() -> Self {
+        Self {
+            expanded: "v".into(),
+            collapsed: ">".into(),
+        }
+    }
+}
+
+impl Default for FoldIndicators {
+    fn default() -> Self {
+        Self::unicode()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodeFoldingOptions {
+    pub enabled: bool,
+    pub indicators: FoldIndicators,
+}
+
+impl Default for CodeFoldingOptions {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            indicators: FoldIndicators::default(),
+        }
+    }
+}

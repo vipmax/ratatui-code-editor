@@ -1,0 +1,25 @@
+[
+  (statement_block)
+  (class_body)
+  (object)
+  (array)
+  (arguments)
+  (switch_body)
+  (template_string)
+  (comment)
+] @fold
+[
+  (function_declaration)
+  (function)
+  (arrow_function)
+  (method_definition)
+  (class_declaration)
+  (if_statement)
+  (for_statement)
+  (for_in_statement)
+  (while_statement)
+  (do_statement)
+  (switch_statement)
+  (try_statement)
+  (catch_clause)
+] @fold

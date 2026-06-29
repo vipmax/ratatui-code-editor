@@ -16,29 +16,39 @@ pub struct ClickTracker {
 
 impl ClickTracker {
     pub fn new(max_dt: Duration) -> Self {
-        Self { last: None, prev: None, max_dt }
+        Self {
+            last: None,
+            prev: None,
+            max_dt,
+        }
     }
 
     pub fn register(&mut self, cursor: usize) -> ClickKind {
         let now = Instant::now();
-        let dbl = self.last
+        let dbl = self
+            .last
             .map(|(t, p)| p == cursor && now.duration_since(t) < self.max_dt)
             .unwrap_or(false);
-        let tpl = self.last.zip(self.prev)
+        let tpl = self
+            .last
+            .zip(self.prev)
             .map(|((t1, p1), (t0, p0))| {
-                p0 == cursor && p1 == cursor &&
-                now.duration_since(t0) < self.max_dt &&
-                t1.duration_since(t0) < self.max_dt
+                p0 == cursor
+                    && p1 == cursor
+                    && now.duration_since(t0) < self.max_dt
+                    && t1.duration_since(t0) < self.max_dt
             })
             .unwrap_or(false);
 
         self.prev = self.last;
         self.last = Some((now, cursor));
 
-        if tpl { ClickKind::Triple }
-        else if dbl { ClickKind::Double }
-        else { ClickKind::Single }
+        if tpl {
+            ClickKind::Triple
+        } else if dbl {
+            ClickKind::Double
+        } else {
+            ClickKind::Single
+        }
     }
 }
-
-

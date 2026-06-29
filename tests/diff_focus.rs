@@ -34,5 +34,6 @@ fn clicking_fold_control_expands_hidden_diff() {
     let area = Rect::new(0, 0, 80, 10);
 
     assert!(editor.expand_hidden_diff_at_mouse(14, 0, &area));
-    assert_eq!(editor.cursor_from_mouse(7, 0, &area), Some(0));
+    // column 9 = line_number_digits(5) + left_code_padding(2) + fold_gutter_width(2)
+    assert_eq!(editor.cursor_from_mouse(9, 0, &area), Some(0));
 }

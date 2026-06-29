@@ -54,12 +54,21 @@ pub struct EditState {
     pub selection: Option<Selection>,
 }
 
+/// A multi-line source range that can be collapsed by the editor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FoldRange {
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
 pub struct Code {
     content: ropey::Rope,
     lang: String,
     tree: Option<Tree>,
     parser: Option<Parser>,
     query: Option<Query>,
+    fold_query: Option<Query>,
+    fold_ranges: Vec<FoldRange>,
     applying_history: bool,
     history: History,
     current_batch: EditBatch,
@@ -82,6 +91,8 @@ impl Code {
             tree: None,
             parser: None,
             query: None,
+            fold_query: None,
+            fold_ranges: Vec::new(),
             applying_history: true,
             history: History::new(1000),
             current_batch: EditBatch::new(),
@@ -97,10 +108,15 @@ impl Code {
             parser.set_language(&language)?;
             let tree = parser.parse(text, None);
             let query = Query::new(&language, &highlights)?;
+            let fold_query = code
+                .get_folds(lang)
+                .and_then(|source| Query::new(&language, &source).ok());
             let (iparsers, iqueries) = code.init_injections(&query)?;
             code.tree = tree;
             code.parser = Some(parser);
             code.query = Some(query);
+            code.fold_query = fold_query;
+            code.update_fold_ranges();
             code.injection_parsers = Some(iparsers);
             code.injection_queries = Some(iqueries);
         }
@@ -145,6 +161,14 @@ impl Code {
         Ok(highlights.to_string())
     }
 
+    fn get_folds(&self, lang: &str) -> Option<String> {
+        let path = format!("langs/{lang}/folds.scm");
+        let source = LangAssets::get(&path)?;
+        std::str::from_utf8(source.data.as_ref())
+            .ok()
+            .map(str::to_owned)
+    }
+
     fn init_injections(
         &self,
         query: &Query,
@@ -179,6 +203,56 @@ impl Code {
         let line_start = self.content.line_to_char(row);
         let col = offset - line_start;
         (row, col)
+    }
+
+    fn update_fold_ranges(&mut self) {
+        let (Some(tree), Some(query)) = (&self.tree, &self.fold_query) else {
+            self.fold_ranges.clear();
+            return;
+        };
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(
+            &query,
+            tree.root_node(),
+            RopeProvider(self.content.slice(..)),
+        );
+        let mut ranges = Vec::new();
+        while let Some(m) = matches.next() {
+            for capture in m.captures {
+                let start_line = capture.node.start_position().row;
+                let end_line = capture.node.end_position().row;
+                if end_line > start_line {
+                    ranges.push(FoldRange {
+                        start_line,
+                        end_line,
+                    });
+                }
+            }
+        }
+        ranges.sort_by_key(|range| (range.start_line, range.end_line));
+        ranges.dedup();
+        self.fold_ranges = ranges;
+    }
+
+    /// Returns cached Tree-sitter foldable ranges for the current syntax tree.
+    pub fn fold_ranges(&self) -> &[FoldRange] {
+        &self.fold_ranges
+    }
+
+    pub fn has_fold_range(&self, start_line: usize, end_line: usize) -> bool {
+        self.fold_ranges
+            .binary_search_by_key(&(start_line, end_line), |range| {
+                (range.start_line, range.end_line)
+            })
+            .is_ok()
+    }
+
+    pub fn fold_range_at_start(&self, line_idx: usize) -> Option<FoldRange> {
+        self.fold_ranges
+            .iter()
+            .copied()
+            .filter(|range| range.start_line == line_idx)
+            .max_by_key(|range| range.end_line)
     }
 
     pub fn offset(&self, row: usize, col: usize) -> usize {
@@ -428,6 +502,7 @@ impl Code {
                 self.tree.as_ref(),
                 None,
             );
+            self.update_fold_ranges();
         }
     }
 

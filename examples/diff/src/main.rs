@@ -1,9 +1,9 @@
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, layout::Position, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend, layout::Position};
 use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::theme::vesper;
 use std::io::stdout;

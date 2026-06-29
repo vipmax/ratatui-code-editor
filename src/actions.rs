@@ -25,20 +25,29 @@ impl Action for MoveRight {
                 if !sel.is_empty() {
                     let (_, end) = sel.sorted();
                     editor.set_cursor(end);
+                    editor.clamp_cursor_to_focus_rows();
                     editor.clear_selection();
                     return;
                 }
             }
         }
 
-        if cursor < editor.code_mut().len() {
-            let new_cursor = editor.code_mut().next_grapheme_boundary(cursor);
+        if cursor < editor.code_ref().len() {
+            let code = editor.code_ref();
+            let mut new_cursor = code.next_grapheme_boundary(cursor);
+            let new_line = code.char_to_line(new_cursor);
+            if !editor.line_visible(new_line) {
+                if let Some(next_line) = editor.next_line(new_line) {
+                    new_cursor = code.line_to_char(next_line);
+                }
+            }
             if self.shift {
                 editor.extend_selection(new_cursor);
             } else {
                 editor.clear_selection();
             }
             editor.set_cursor(new_cursor);
+            editor.clamp_cursor_to_focus_rows();
         }
     }
 }
@@ -62,6 +71,7 @@ impl Action for MoveLeft {
                 if !sel.is_empty() {
                     let (start, _) = sel.sorted();
                     editor.set_cursor(start);
+                    editor.clamp_cursor_to_focus_rows();
                     editor.clear_selection();
                     return;
                 }
@@ -69,13 +79,22 @@ impl Action for MoveLeft {
         }
 
         if cursor > 0 {
-            let new_cursor = editor.code_mut().prev_grapheme_boundary(cursor);
+            let code = editor.code_ref();
+            let mut new_cursor = code.prev_grapheme_boundary(cursor);
+            let new_line = code.char_to_line(new_cursor);
+            if !editor.line_visible(new_line) {
+                if let Some(prev_line) = editor.prev_line(new_line) {
+                    new_cursor =
+                        code.line_to_char(prev_line) + code.line_len(prev_line).saturating_sub(1);
+                }
+            }
             if self.shift {
                 editor.extend_selection(new_cursor);
             } else {
                 editor.clear_selection();
             }
             editor.set_cursor(new_cursor);
+            editor.clamp_cursor_to_focus_rows();
         }
     }
 }
@@ -116,6 +135,7 @@ impl Action for MoveUp {
 
         // Set the new cursor position
         editor.set_cursor(new_cursor);
+        editor.clamp_cursor_to_focus_rows();
     }
 }
 
@@ -155,6 +175,7 @@ impl Action for MoveDown {
 
         // Set the new cursor position
         editor.set_cursor(new_cursor);
+        editor.clamp_cursor_to_focus_rows();
     }
 }
 

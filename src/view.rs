@@ -31,9 +31,16 @@ impl ViewMode {
 pub(crate) struct View {
     rows: Vec<VisualRow>,
     expanded_hidden_ranges: Vec<(usize, usize)>,
+    collapsed_code_folds: Vec<(usize, usize)>,
 }
 
 impl View {
+    pub(crate) fn new(code: &Code, mode: ViewMode) -> Self {
+        let mut view = Self::default();
+        view.rebuild(code, None, mode);
+        view
+    }
+
     pub(crate) fn fold_separator_text(hidden_lines: usize, amount: usize) -> String {
         format!(
             "[+{}up] [+{}down] [show unchanged {} lines]",
@@ -48,11 +55,63 @@ impl View {
     pub(crate) fn clear(&mut self) {
         self.rows.clear();
         self.expanded_hidden_ranges.clear();
+        self.collapsed_code_folds.clear();
+    }
+
+    pub(crate) fn toggle_code_fold(
+        &mut self,
+        code: &Code,
+        original: Option<&Code>,
+        mode: ViewMode,
+        line_idx: usize,
+    ) -> bool {
+        let Some(range) = code.fold_range_at_start(line_idx) else {
+            return false;
+        };
+        let fold = (range.start_line, range.end_line);
+        if let Some(index) = self
+            .collapsed_code_folds
+            .iter()
+            .position(|item| *item == fold)
+        {
+            self.collapsed_code_folds.swap_remove(index);
+        } else {
+            self.collapsed_code_folds.push(fold);
+        }
+        self.rebuild(code, original, mode);
+        true
+    }
+
+    pub(crate) fn clear_code_folds(&mut self) {
+        self.collapsed_code_folds.clear();
+    }
+
+    pub(crate) fn code_fold_indicator(&self, code: &Code, line_idx: usize) -> Option<bool> {
+        code.fold_range_at_start(line_idx).map(|range| {
+            self.collapsed_code_folds
+                .contains(&(range.start_line, range.end_line))
+        })
     }
 
     pub(crate) fn rebuild(&mut self, code: &Code, original: Option<&Code>, mode: ViewMode) {
+        self.collapsed_code_folds.retain(|fold| {
+            let (start_line, end_line) = *fold;
+            code.has_fold_range(start_line, end_line)
+        });
+
         if !mode.has_diff() {
-            self.clear();
+            self.rows = (0..code.len_lines())
+                .filter(|line_idx| {
+                    !self
+                        .collapsed_code_folds
+                        .iter()
+                        .any(|(start, end)| *line_idx > *start && *line_idx <= *end)
+                })
+                .map(|line_idx| VisualRow::Real {
+                    line_idx,
+                    is_added: false,
+                })
+                .collect();
             return;
         }
 
@@ -65,17 +124,37 @@ impl View {
             ViewMode::Plain => Vec::new(),
             ViewMode::Diff => {
                 self.expanded_hidden_ranges.clear();
-                Self::build_diff_rows(code, original)
+                Self::apply_code_folds(
+                    Self::build_diff_rows(code, original),
+                    &self.collapsed_code_folds,
+                )
             }
             ViewMode::DiffFocus { context_lines } => {
                 let full_rows = Self::build_diff_rows(code, original);
-                Self::focused_diff_rows(
+                let rows = Self::focused_diff_rows(
                     &full_rows,
                     context_lines,
                     &self.expanded_hidden_ranges,
-                )
+                );
+                Self::apply_code_folds(rows, &self.collapsed_code_folds)
             }
         };
+    }
+
+    /// Filters out rows whose source lines fall inside any collapsed fold range.
+    /// `GhostDeleted` rows use `anchor_line` which is `line_idx + 1`, hence the `+1` adjustment.
+    fn apply_code_folds(rows: Vec<VisualRow>, folds: &[(usize, usize)]) -> Vec<VisualRow> {
+        rows.into_iter()
+            .filter(|row| match row {
+                VisualRow::Real { line_idx, .. } => !folds
+                    .iter()
+                    .any(|(start, end)| *line_idx > *start && *line_idx <= *end),
+                VisualRow::GhostDeleted { anchor_line, .. } => !folds
+                    .iter()
+                    .any(|(start, end)| *anchor_line > *start + 1 && *anchor_line <= *end + 1),
+                VisualRow::FoldSeparator { .. } => true,
+            })
+            .collect()
     }
 
     pub(crate) fn expand_hidden_at_visual_row(
@@ -101,7 +180,8 @@ impl View {
             hidden_lines,
             hidden_start,
             hidden_end,
-        } = row else {
+        } = row
+        else {
             return false;
         };
 
@@ -109,9 +189,9 @@ impl View {
             return false;
         }
 
-        let Some(direction) = Self::fold_expand_direction_for_click(
-            hidden_lines, clicked_col, visible_width, amount
-        ) else {
+        let Some(direction) =
+            Self::fold_expand_direction_for_click(hidden_lines, clicked_col, visible_width, amount)
+        else {
             return false;
         };
 
@@ -170,7 +250,7 @@ impl View {
     }
 
     pub(crate) fn visual_len_lines(&self, code: &Code, mode: ViewMode) -> usize {
-        if mode.has_diff() {
+        if mode.has_diff() || !self.rows.is_empty() {
             return self.rows.len().max(1);
         }
         code.len_lines().max(1)
@@ -183,7 +263,7 @@ impl View {
         visual_row: usize,
     ) -> Option<usize> {
         let last = code.len_lines().saturating_sub(1);
-        if !mode.has_diff() {
+        if !mode.has_diff() && self.rows.is_empty() {
             return Some(visual_row.min(last));
         }
 
@@ -197,7 +277,7 @@ impl View {
     }
 
     pub(crate) fn visual_row_for_line(&self, mode: ViewMode, line_idx: usize) -> Option<usize> {
-        if !mode.has_diff() {
+        if !mode.has_diff() && self.rows.is_empty() {
             return Some(line_idx);
         }
 
@@ -211,7 +291,7 @@ impl View {
     }
 
     pub(crate) fn prev_line(&self, mode: ViewMode, line_idx: usize) -> Option<usize> {
-        if !mode.has_diff() {
+        if !mode.has_diff() && self.rows.is_empty() {
             return line_idx.checked_sub(1);
         }
 
@@ -226,7 +306,7 @@ impl View {
     }
 
     pub(crate) fn next_line(&self, code: &Code, mode: ViewMode, line_idx: usize) -> Option<usize> {
-        if !mode.has_diff() {
+        if !mode.has_diff() && self.rows.is_empty() {
             let next = line_idx + 1;
             return (next < code.len_lines()).then_some(next);
         }
@@ -265,8 +345,11 @@ impl View {
     }
 
     fn build_diff_rows(code: &Code, original: &Code) -> Vec<VisualRow> {
-        let current_lines: Vec<RopeSlice<'_>> = (0..code.len_lines()).map(|i| code.line(i)).collect();
-        let original_lines: Vec<RopeSlice<'_>> = (0..original.len_lines()).map(|i| original.line(i)).collect();
+        let current_lines: Vec<RopeSlice<'_>> =
+            (0..code.len_lines()).map(|i| code.line(i)).collect();
+        let original_lines: Vec<RopeSlice<'_>> = (0..original.len_lines())
+            .map(|i| original.line(i))
+            .collect();
         let diff = similar::capture_diff_slices(Algorithm::Myers, &original_lines, &current_lines);
 
         let mut rows = Vec::new();
@@ -315,7 +398,9 @@ impl View {
                         current_line_idx += 1;
                     }
                 }
-                DiffOp::Replace { old_len, new_len, .. } => {
+                DiffOp::Replace {
+                    old_len, new_len, ..
+                } => {
                     for _ in 0..old_len {
                         pending_deletes.push(original_line_idx);
                         original_line_idx += 1;
@@ -364,7 +449,6 @@ impl View {
         context_lines: usize,
         expanded_hidden_ranges: &[(usize, usize)],
     ) -> Vec<VisualRow> {
-
         // Build a visibility mask: changed rows plus configured context around them.
         let mut include = vec![false; rows.len()];
 
@@ -431,12 +515,15 @@ impl View {
     }
 
     fn add_expanded_hidden_range(&mut self, start: usize, end: usize) {
-        self.expanded_hidden_ranges.push((start.min(end), start.max(end)));
+        self.expanded_hidden_ranges
+            .push((start.min(end), start.max(end)));
         self.expanded_hidden_ranges.sort_by_key(|(s, _)| *s);
 
         let mut merged: Vec<(usize, usize)> = Vec::new();
         for (s, e) in self.expanded_hidden_ranges.drain(..) {
-            if let Some((_, last_end)) = merged.last_mut() && s <= *last_end + 1 {
+            if let Some((_, last_end)) = merged.last_mut()
+                && s <= *last_end + 1
+            {
                 *last_end = (*last_end).max(e);
             } else {
                 merged.push((s, e));
@@ -456,8 +543,26 @@ mod tests {
         let original = Code::new("hello\nworld", "unknown", None).unwrap();
         let rows = View::build_diff_rows(&code, &original);
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0], VisualRow::Real { line_idx: 0, is_added: false });
-        assert_eq!(rows[1], VisualRow::Real { line_idx: 1, is_added: true });
-        assert_eq!(rows[2], VisualRow::Real { line_idx: 2, is_added: false });
+        assert_eq!(
+            rows[0],
+            VisualRow::Real {
+                line_idx: 0,
+                is_added: false
+            }
+        );
+        assert_eq!(
+            rows[1],
+            VisualRow::Real {
+                line_idx: 1,
+                is_added: true
+            }
+        );
+        assert_eq!(
+            rows[2],
+            VisualRow::Real {
+                line_idx: 2,
+                is_added: false
+            }
+        );
     }
 }
