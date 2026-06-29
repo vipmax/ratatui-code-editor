@@ -19,6 +19,8 @@ A code editor widget for [Ratatui](https://github.com/ratatui/ratatui), built wi
 - 📱 **Responsive** - Adapts to terminal window size changes
 - 🔖 **Visual Marks** - Mark specific regions in the editor
 - 🧩 **Emoji/Unicode Aware** - Correct widths, cursor, and selection for grapheme clusters (e.g., ❤️)
+- 🧵 **Diff Views** - Show added/deleted lines and focused diffs with expandable unchanged sections
+- 📂 **Code Folding** - Tree-sitter powered fold ranges with keyboard and mouse gutter toggles
 
 ## Syntax Highlighting: Fast, Cached, and Wide-Row Ready
 
@@ -30,6 +32,39 @@ The Ratatui Code Editor features blazing fast syntax highlighting powered by [Tr
 - **Wide Row Support:** Handles long lines and wide code gracefully, ensuring correct highlighting and cursor placement even with complex Unicode or tab characters.
 
 This approach means you get instant, editor-quality highlighting in your terminal, with no lag—even for big files or wide code blocks.
+
+## Diff Views
+
+The editor can compare the current buffer with an original version and render added lines, deleted ghost lines, and focused diffs.
+
+```rust
+editor.set_original_code(original_content)?;
+editor.set_diff_enabled(true);
+editor.set_diff_focus_context(3);
+editor.set_diff_focus_enabled(true);
+```
+
+Focused diff mode keeps changed lines visible with a configurable amount of surrounding context. Hidden unchanged sections can be expanded from the rendered fold separator.
+
+## Code Folding
+
+Code folding is powered by Tree-sitter fold queries embedded alongside the highlight queries. The fold gutter is rendered next to the line numbers and can be toggled by mouse, or from code:
+
+```rust
+editor.toggle_fold_at_cursor();
+editor.toggle_fold_at_line(0);
+```
+
+Folding can be disabled or configured with ASCII indicators:
+
+```rust
+use ratatui_code_editor::types::{CodeFoldingOptions, FoldIndicators};
+
+editor.set_code_folding_options(CodeFoldingOptions {
+    enabled: true,
+    indicators: FoldIndicators::ascii(),
+});
+```
 
 ## Supported Languages
 
@@ -136,6 +171,9 @@ cargo run --release -p diff
 
 # Diff editor for a real file (loads original from git HEAD when available)
 cargo run --release -p diff_editor -- <filename>
+
+# Code folding editor
+cargo run --release -p fold_editor -- <filename>
 ```
 
 ## Key Bindings
@@ -170,6 +208,10 @@ cargo run --release -p diff_editor -- <filename>
 - **Ctrl+Z** - Undo
 - **Ctrl+Y** - Redo
 
+### Example-specific
+- **Ctrl+F** - Toggle fold at cursor in the `fold_editor` example
+- **1 / 2 / 3** - Switch plain, focused diff, and full diff modes in the `diff_editor` example
+
 ## Themes
 
 The editor comes with built-in themes:
@@ -195,6 +237,7 @@ The editor is built with several key components:
 - **Code** - Text buffer with Tree-sitter integration for syntax highlighting
 - **History** - Undo/redo functionality with edit tracking
 - **Selection** - Text selection state management
+- **View** - Plain, diff, focused diff, and folded visual row mapping
 - **Theme** - Color scheme management
 
 ## Dependencies
