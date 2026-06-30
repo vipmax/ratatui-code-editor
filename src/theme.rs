@@ -23,7 +23,7 @@ pub fn vesper() -> Vec<(&'static str, &'static str)> {
         ("tag.attribute", "#c6a5fc"),
         ("tag", "#c6a5fc"),
         ("error", "#A5FCB6"),
-        ("diff_added", "#017d4e"),
-        ("diff_deleted", "#d94b4b"),
+        ("diff_added", "#183c25"),
+        ("diff_deleted", "#4c2323"),
     ]
 }

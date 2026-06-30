@@ -37,12 +37,12 @@ impl Widget for &Editor {
             .theme
             .get("diff_added")
             .and_then(|s| s.fg)
-            .unwrap_or(Color::Rgb(30, 90, 55));
+            .unwrap_or(Color::Rgb(24, 60, 37));
         let diff_deleted_bg = self
             .theme
             .get("diff_deleted")
             .and_then(|s| s.fg)
-            .unwrap_or(Color::Rgb(217, 75, 75));
+            .unwrap_or(Color::Rgb(76, 35, 35));
 
         let fold_separator_style = Style::default().fg(Color::DarkGray);
 

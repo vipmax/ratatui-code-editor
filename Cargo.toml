@@ -64,10 +64,17 @@ tree-sitter-bash = "~0.25.0"
 tree-sitter-md = "~0.5.1"
 
 [dev-dependencies]
+criterion = "0.5"
 ratatui = { workspace = true }
+
+[[bench]]
+name = "diff"
+harness = false
+required-features = ["bench-internals"]
 
 [features]
 default = ["crossterm"]
+bench-internals = []
 crossterm = [
     "dep:crossterm"
 ]

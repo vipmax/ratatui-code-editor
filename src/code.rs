@@ -62,7 +62,7 @@ pub struct FoldRange {
 }
 
 pub struct Code {
-    content: ropey::Rope,
+    pub(crate) content: ropey::Rope,
     lang: String,
     tree: Option<Tree>,
     parser: Option<Parser>,
