@@ -1,7 +1,6 @@
 use crate::code::Code;
+use crate::diff;
 use crate::types::VisualRow;
-use ropey::RopeSlice;
-use similar::{Algorithm, DiffOp};
 
 #[derive(Clone, Copy)]
 pub(crate) enum FoldExpandDirection {
@@ -125,12 +124,12 @@ impl View {
             ViewMode::Diff => {
                 self.expanded_hidden_ranges.clear();
                 Self::apply_code_folds(
-                    Self::build_diff_rows(code, original),
+                    diff::build_diff_rows(code, original),
                     &self.collapsed_code_folds,
                 )
             }
             ViewMode::DiffFocus { context_lines } => {
-                let full_rows = Self::build_diff_rows(code, original);
+                let full_rows = diff::build_diff_rows(code, original);
                 let rows = Self::focused_diff_rows(
                     &full_rows,
                     context_lines,
@@ -344,106 +343,6 @@ impl View {
         }
     }
 
-    fn build_diff_rows(code: &Code, original: &Code) -> Vec<VisualRow> {
-        let current_lines: Vec<RopeSlice<'_>> =
-            (0..code.len_lines()).map(|i| code.line(i)).collect();
-        let original_lines: Vec<RopeSlice<'_>> = (0..original.len_lines())
-            .map(|i| original.line(i))
-            .collect();
-        let diff = similar::capture_diff_slices(Algorithm::Myers, &original_lines, &current_lines);
-
-        let mut rows = Vec::new();
-        let mut current_line_idx = 0usize;
-        let mut original_line_idx = 0usize;
-        let mut pending_deletes: Vec<usize> = Vec::new();
-
-        for op in diff {
-            match op {
-                DiffOp::Equal { len, .. } => {
-                    for _ in 0..len {
-                        let anchor_line = current_line_idx + 1;
-                        for orig_idx in pending_deletes.drain(..) {
-                            rows.push(VisualRow::GhostDeleted {
-                                anchor_line,
-                                original_line_idx: orig_idx,
-                            });
-                        }
-                        rows.push(VisualRow::Real {
-                            line_idx: current_line_idx,
-                            is_added: false,
-                        });
-                        current_line_idx += 1;
-                        original_line_idx += 1;
-                    }
-                }
-                DiffOp::Delete { old_len, .. } => {
-                    for _ in 0..old_len {
-                        pending_deletes.push(original_line_idx);
-                        original_line_idx += 1;
-                    }
-                }
-                DiffOp::Insert { new_len, .. } => {
-                    for _ in 0..new_len {
-                        let anchor = current_line_idx + 1;
-                        for orig_idx in pending_deletes.drain(..) {
-                            rows.push(VisualRow::GhostDeleted {
-                                anchor_line: anchor,
-                                original_line_idx: orig_idx,
-                            });
-                        }
-                        rows.push(VisualRow::Real {
-                            line_idx: current_line_idx,
-                            is_added: true,
-                        });
-                        current_line_idx += 1;
-                    }
-                }
-                DiffOp::Replace {
-                    old_len, new_len, ..
-                } => {
-                    for _ in 0..old_len {
-                        pending_deletes.push(original_line_idx);
-                        original_line_idx += 1;
-                    }
-                    for _ in 0..new_len {
-                        let anchor = current_line_idx + 1;
-                        for orig_idx in pending_deletes.drain(..) {
-                            rows.push(VisualRow::GhostDeleted {
-                                anchor_line: anchor,
-                                original_line_idx: orig_idx,
-                            });
-                        }
-                        rows.push(VisualRow::Real {
-                            line_idx: current_line_idx,
-                            is_added: true,
-                        });
-                        current_line_idx += 1;
-                    }
-                }
-            }
-        }
-
-        if !pending_deletes.is_empty() {
-            let anchor_line = current_line_idx + 1;
-            for original_line_idx in pending_deletes.drain(..) {
-                rows.push(VisualRow::GhostDeleted {
-                    anchor_line,
-                    original_line_idx,
-                });
-            }
-        }
-
-        while current_line_idx < code.len_lines() {
-            rows.push(VisualRow::Real {
-                line_idx: current_line_idx,
-                is_added: false,
-            });
-            current_line_idx += 1;
-        }
-
-        rows
-    }
-
     fn focused_diff_rows(
         rows: &[VisualRow],
         context_lines: usize,
@@ -530,39 +429,5 @@ impl View {
             }
         }
         self.expanded_hidden_ranges = merged;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_build_diff_rows() {
-        let code = Code::new("hello\nthere\nworld", "unknown", None).unwrap();
-        let original = Code::new("hello\nworld", "unknown", None).unwrap();
-        let rows = View::build_diff_rows(&code, &original);
-        assert_eq!(rows.len(), 3);
-        assert_eq!(
-            rows[0],
-            VisualRow::Real {
-                line_idx: 0,
-                is_added: false
-            }
-        );
-        assert_eq!(
-            rows[1],
-            VisualRow::Real {
-                line_idx: 1,
-                is_added: true
-            }
-        );
-        assert_eq!(
-            rows[2],
-            VisualRow::Real {
-                line_idx: 2,
-                is_added: false
-            }
-        );
     }
 }
