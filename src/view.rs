@@ -109,6 +109,7 @@ impl View {
                 .map(|line_idx| VisualRow::Real {
                     line_idx,
                     is_added: false,
+                    orig_line_idx: None,
                 })
                 .collect();
             return;
@@ -124,12 +125,12 @@ impl View {
             ViewMode::Diff => {
                 self.expanded_hidden_ranges.clear();
                 Self::apply_code_folds(
-                    diff::build_diff_rows(code, original),
+                    diff::compute_diff(code, original),
                     &self.collapsed_code_folds,
                 )
             }
             ViewMode::DiffFocus { context_lines } => {
-                let full_rows = diff::build_diff_rows(code, original);
+                let full_rows = diff::compute_diff(code, original);
                 let rows = Self::focused_diff_rows(
                     &full_rows,
                     context_lines,

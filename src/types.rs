@@ -8,11 +8,20 @@ pub(crate) type Hightlight = (usize, usize, Style);
 // source id, start offset, end offset
 pub(crate) type HightlightCache = HashMap<(u8, usize, usize), Vec<Hightlight>>;
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LineDiff {
+    pub(crate) deletions: Vec<(usize, usize)>,
+    pub(crate) additions: Vec<(usize, usize)>,
+}
+
+pub(crate) type LineDiffCache = HashMap<(usize, usize), LineDiff>;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum VisualRow {
     Real {
         line_idx: usize,
         is_added: bool,
+        orig_line_idx: Option<usize>,
     },
     FoldSeparator {
         hidden_lines: usize,
@@ -22,6 +31,7 @@ pub(crate) enum VisualRow {
     GhostDeleted {
         anchor_line: usize,
         original_line_idx: usize,
+        curr_line_idx: Option<usize>,
     },
 }
 

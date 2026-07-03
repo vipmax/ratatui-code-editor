@@ -4,7 +4,7 @@ use crate::code::Code;
 use crate::code::{EditBatch, Operation};
 use crate::code::{RopeGraphemes, grapheme_width, grapheme_width_and_chars_len};
 use crate::selection::{Selection, SelectionSnap};
-use crate::types::{CodeFoldingOptions, DiffOptions, HightlightCache, Theme, VisualRow};
+use crate::types::{CodeFoldingOptions, DiffOptions, HightlightCache, Theme, VisualRow, LineDiffCache};
 use crate::utils;
 use crate::view::{View, ViewMode};
 use anyhow::{Result, anyhow};
@@ -52,6 +52,9 @@ pub struct Editor {
     /// Syntax highlight cache by intervals to speed up rendering
     pub(crate) highlights_cache: RefCell<HightlightCache>,
 
+    /// Cache for line diff highlights to speed up rendering
+    pub(crate) line_diff_cache: RefCell<LineDiffCache>,
+
     /// Controls when to show the line numbers
     pub(crate) show_line_numbers: bool,
 
@@ -90,6 +93,7 @@ impl Editor {
 
         let theme = Self::build_theme(&theme);
         let highlights_cache = RefCell::new(HashMap::new());
+        let line_diff_cache = RefCell::new(HashMap::new());
         let view = View::new(&code, ViewMode::Plain);
 
         Ok(Self {
@@ -104,6 +108,7 @@ impl Editor {
             clipboard: None,
             marks: None,
             highlights_cache,
+            line_diff_cache,
             show_line_numbers: true,
             code_folding_options: CodeFoldingOptions::default(),
             left_code_padding: 2,
@@ -382,6 +387,7 @@ impl Editor {
         let original = Code::new(content, self.code_ref().lang(), None)
             .or_else(|_| Code::new(content, "text", None))?;
         self.highlights_cache.borrow_mut().clear();
+        self.line_diff_cache.borrow_mut().clear();
         self.original_code = Some(original);
         self.rebuild_view();
         Ok(())
@@ -389,6 +395,7 @@ impl Editor {
 
     pub fn clear_original_code(&mut self) {
         self.highlights_cache.borrow_mut().clear();
+        self.line_diff_cache.borrow_mut().clear();
         self.original_code = None;
         self.rebuild_view();
         self.clamp_offset_y();
@@ -602,6 +609,10 @@ impl Editor {
             .collect()
     }
 
+    pub(crate) fn theme_style(&self, key: &str) -> Style {
+        self.theme.get(key).cloned().unwrap_or_default()
+    }
+
     pub fn get_content(&self) -> String {
         self.code.get_content()
     }
@@ -704,6 +715,7 @@ impl Editor {
             Some(VisualRow::Real {
                 line_idx: visual_row,
                 is_added: false,
+                orig_line_idx: None,
             })
         } else {
             None
@@ -771,8 +783,36 @@ impl Editor {
 
     pub fn reset_highlight_cache(&mut self) {
         self.highlights_cache.borrow_mut().clear();
+        self.line_diff_cache.borrow_mut().clear();
         self.rebuild_view();
     }
+
+    pub(crate) fn get_line_diff(
+        &self,
+        orig_idx: usize,
+        curr_idx: usize,
+        is_ghost: bool,
+    ) -> Vec<(usize, usize)> {
+        let Some(orig_code) = &self.original_code else {
+            return Vec::new();
+        };
+
+        let mut cache = self.line_diff_cache.borrow_mut();
+        let key = (orig_idx, curr_idx);
+
+        let diff = cache.entry(key).or_insert_with(|| {
+            crate::diff::compute_line_diff(orig_code, orig_idx, &self.code, curr_idx)
+        });
+
+        if is_ghost {
+            diff.deletions.clone()
+        } else {
+            diff.additions.clone()
+        }
+    }
+}
+
+impl Editor {
 
     fn clamp_offset_y(&mut self) {
         self.offset_y = self.offset_y.min(self.visual_len_lines().saturating_sub(1));
@@ -891,5 +931,22 @@ impl Editor {
             self.original_code.as_ref(),
             self.active_view_mode(),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_editor_get_line_diff() {
+        let mut editor = Editor::new("rust", "fn main() {\n    let a = 10;\n}", vec![]).unwrap();
+        editor.set_original_code("fn main() {\n    let b = 10;\n}").unwrap();
+
+        let add_highlights = editor.get_line_diff(1, 1, false);
+        assert_eq!(add_highlights, vec![(8, 9)]);
+
+        let del_highlights = editor.get_line_diff(1, 1, true);
+        assert_eq!(del_highlights, vec![(8, 9)]);
     }
 }

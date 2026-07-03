@@ -33,16 +33,10 @@ impl Widget for &Editor {
         let line_number_style = Style::default().fg(Color::DarkGray);
         let default_text_style = Style::default().fg(Color::White);
 
-        let diff_added_bg = self
-            .theme
-            .get("diff_added")
-            .and_then(|s| s.fg)
-            .unwrap_or(Color::Rgb(24, 60, 37));
-        let diff_deleted_bg = self
-            .theme
-            .get("diff_deleted")
-            .and_then(|s| s.fg)
-            .unwrap_or(Color::Rgb(76, 35, 35));
+        let diff_added_bg = self.theme_style("diff_added").fg.unwrap_or(Color::Rgb(24, 60, 37));
+        let diff_added_word_bg = self.theme_style("diff_added_word").fg.unwrap_or(Color::Rgb(38, 91, 53));
+        let diff_deleted_bg = self.theme_style("diff_deleted").fg.unwrap_or(Color::Rgb(76, 35, 35));
+        let diff_deleted_word_bg = self.theme_style("diff_deleted_word").fg.unwrap_or(Color::Rgb(118, 53, 53));
 
         let fold_separator_style = Style::default().fg(Color::DarkGray);
 
@@ -75,11 +69,11 @@ impl Widget for &Editor {
                     buf.set_string(text_x, draw_y, &visible_text, fold_separator_style);
                 }
             } else {
-                let (line_idx, is_added, is_ghost) = match &row {
-                    VisualRow::Real { line_idx, is_added } => (*line_idx, *is_added, false),
+                let (line_idx, is_added, is_ghost, partner_line_idx) = match &row {
+                    VisualRow::Real { line_idx, is_added, orig_line_idx } => (*line_idx, *is_added, false, *orig_line_idx),
                     VisualRow::GhostDeleted {
-                        original_line_idx, ..
-                    } => (*original_line_idx, false, true),
+                        original_line_idx, curr_line_idx, ..
+                    } => (*original_line_idx, false, true, *curr_line_idx),
                     _ => unreachable!(),
                 };
                 let source_code = if is_ghost {
@@ -139,6 +133,15 @@ impl Widget for &Editor {
                     Vec::new()
                 };
 
+                // Fetch intra-line diff highlights on the fly from cache
+                let intra_highlights = partner_line_idx.map(|partner_idx| {
+                    if is_ghost {
+                        self.get_line_diff(line_idx, partner_idx, true)
+                    } else {
+                        self.get_line_diff(partner_idx, line_idx, false)
+                    }
+                });
+
                 // Base style background color
                 let base_bg = match is_ghost {
                     true => Some(diff_deleted_bg),
@@ -161,8 +164,19 @@ impl Widget for &Editor {
 
                     let start_x = text_x + x as u16;
 
+                    // Check if current character falls within an intra-line highlight range
+                    let is_word_highlight = intra_highlights.as_ref().map_or(false, |ranges| {
+                        ranges.iter().any(|&(start, end)| char_col >= start && char_col < end)
+                    });
+
+                    let active_bg = if is_word_highlight {
+                        if is_ghost { Some(diff_deleted_word_bg) } else { Some(diff_added_word_bg) }
+                    } else {
+                        base_bg
+                    };
+
                     // Compose style
-                    let mut style = if let Some(bg) = base_bg {
+                    let mut style = if let Some(bg) = active_bg {
                         Style::default().bg(bg)
                     } else {
                         default_text_style
@@ -172,8 +186,8 @@ impl Widget for &Editor {
                     for &(start, end, s) in &highlights {
                         if start <= byte_idx_in_rope && byte_idx_in_rope < end {
                             style = style.patch(s);
-                            if let Some(bg) = base_bg {
-                                style = style.bg(bg); // Keep diff background
+                            if let Some(bg) = active_bg {
+                                style = style.bg(bg); // Keep active diff background
                             }
                             break;
                         }

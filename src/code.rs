@@ -305,6 +305,43 @@ impl Code {
         self.content.line(line_idx)
     }
 
+    pub(crate) fn tokenize_line(&self, line_idx: usize) -> Vec<(RopeSlice<'_>, usize, usize)> {
+        let text = self.line(line_idx);
+        let mut tokens = Vec::new();
+        let mut chars = text.chars().enumerate().peekable();
+
+        while let Some(&(start_char, c)) = chars.peek() {
+            if c.is_alphanumeric() || c == '_' {
+                chars.next();
+                while let Some(&(_, next_c)) = chars.peek() {
+                    if next_c.is_alphanumeric() || next_c == '_' {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                let end_char = chars.peek().map_or(text.len_chars(), |&(idx, _)| idx);
+                tokens.push((text.slice(start_char..end_char), start_char, end_char));
+            } else if c.is_whitespace() {
+                chars.next();
+                while let Some(&(_, next_c)) = chars.peek() {
+                    if next_c.is_whitespace() {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                let end_char = chars.peek().map_or(text.len_chars(), |&(idx, _)| idx);
+                tokens.push((text.slice(start_char..end_char), start_char, end_char));
+            } else {
+                chars.next();
+                let end_char = chars.peek().map_or(text.len_chars(), |&(idx, _)| idx);
+                tokens.push((text.slice(start_char..end_char), start_char, end_char));
+            }
+        }
+        tokens
+    }
+
     pub fn char_to_line(&self, char_idx: usize) -> usize {
         self.content.char_to_line(char_idx)
     }
