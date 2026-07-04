@@ -2,7 +2,7 @@ use ratatui_core::style::Style;
 use std::collections::HashMap;
 
 // keyword and ratatui style
-pub(crate) type Theme = HashMap<String, Style>;
+pub type Theme = HashMap<String, Style>;
 // start byte, end byte, style
 pub(crate) type Hightlight = (usize, usize, Style);
 // source id, start offset, end offset

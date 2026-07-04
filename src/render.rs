@@ -33,10 +33,23 @@ impl Widget for &Editor {
         let line_number_style = Style::default().fg(Color::DarkGray);
         let default_text_style = Style::default().fg(Color::White);
 
-        let diff_added_bg = self.theme_style("diff_added").fg.unwrap_or(Color::Rgb(24, 60, 37));
-        let diff_added_word_bg = self.theme_style("diff_added_word").fg.unwrap_or(Color::Rgb(38, 91, 53));
-        let diff_deleted_bg = self.theme_style("diff_deleted").fg.unwrap_or(Color::Rgb(76, 35, 35));
-        let diff_deleted_word_bg = self.theme_style("diff_deleted_word").fg.unwrap_or(Color::Rgb(118, 53, 53));
+        let diff_added_bg = self.theme_style("diff_added").bg
+            .or(self.theme_style("diff_added").fg)
+            .unwrap_or(Color::Rgb(1, 125, 78));
+        let diff_added_word_bg = self.theme_style("diff_added_word").bg
+            .or(self.theme_style("diff_added_word").fg)
+            .unwrap_or(Color::Rgb(19, 163, 111));
+        let diff_deleted_bg = self.theme_style("diff_deleted").bg
+            .or(self.theme_style("diff_deleted").fg)
+            .unwrap_or(Color::Rgb(217, 75, 75));
+        let diff_deleted_word_bg = self.theme_style("diff_deleted_word").bg
+            .or(self.theme_style("diff_deleted_word").fg)
+            .unwrap_or(Color::Rgb(248, 99, 99));
+
+        let word_highlights = self.word_highlight_ranges();
+        let word_highlight_bg = self.theme_style("word_highlight").bg
+            .or(self.theme_style("word_highlight").fg)
+            .unwrap_or(Color::Rgb(48, 54, 64));
 
         let fold_separator_style = Style::default().fg(Color::DarkGray);
 
@@ -122,6 +135,17 @@ impl Widget for &Editor {
                 let start_byte = source_code.char_to_byte(char_slice_start);
                 let end_byte = source_code.char_to_byte(char_slice_end);
 
+                let line_end_char = line_start_char + line_len;
+                let line_word_highlights: Vec<(usize, usize)> = if is_ghost {
+                    Vec::new()
+                } else {
+                    word_highlights
+                        .iter()
+                        .filter(|&&(start, end)| start < line_end_char && end > line_start_char)
+                        .cloned()
+                        .collect()
+                };
+
                 // Fetch highlights
                 let highlights = if code.is_highlight() {
                     if is_ghost {
@@ -196,6 +220,14 @@ impl Widget for &Editor {
                     let global_char_idx = line_start_char + char_col;
 
                     if !is_ghost {
+                        // Layer D: Word Highlight
+                        let is_in_word_highlight = line_word_highlights.iter().any(|&(start, end)| {
+                            global_char_idx >= start && global_char_idx < end
+                        });
+                        if is_in_word_highlight {
+                            style = style.bg(word_highlight_bg);
+                        }
+
                         // Layer B: Selection
                         if let Some(selection) = self.selection
                             && !selection.is_empty()

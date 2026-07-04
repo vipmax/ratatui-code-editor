@@ -55,6 +55,12 @@ pub struct Editor {
     /// Cache for line diff highlights to speed up rendering
     pub(crate) line_diff_cache: RefCell<LineDiffCache>,
 
+    /// Controls whether to highlight occurrences of the word under the cursor
+    pub(crate) word_highlight_enabled: bool,
+
+    /// Cache for word highlight ranges: (cursor, list of ranges)
+    pub(crate) word_highlight_cache: RefCell<Option<(usize, Vec<(usize, usize)>)>>,
+
     /// Controls when to show the line numbers
     pub(crate) show_line_numbers: bool,
 
@@ -109,6 +115,8 @@ impl Editor {
             marks: None,
             highlights_cache,
             line_diff_cache,
+            word_highlight_enabled: true,
+            word_highlight_cache: RefCell::new(None),
             show_line_numbers: true,
             code_folding_options: CodeFoldingOptions::default(),
             left_code_padding: 2,
@@ -599,12 +607,21 @@ impl Editor {
         }
     }
 
-    fn build_theme(theme: &Vec<(&str, &str)>) -> Theme {
+    pub fn build_theme(theme: &Vec<(&str, &str)>) -> Theme {
         theme
             .into_iter()
             .map(|(name, hex)| {
                 let (r, g, b) = utils::rgb(hex);
-                (name.to_string(), Style::default().fg(Color::Rgb(r, g, b)))
+                let color = Color::Rgb(r, g, b);
+                let style = match *name {
+                    "diff_added"
+                    | "diff_added_word"
+                    | "diff_deleted"
+                    | "diff_deleted_word"
+                    | "word_highlight" => Style::default().bg(color),
+                    _ => Style::default().fg(color),
+                };
+                (name.to_string(), style)
             })
             .collect()
     }
@@ -781,13 +798,89 @@ impl Editor {
         highlights
     }
 
+    pub fn word_highlight_ranges(&self) -> Vec<(usize, usize)> {
+        if !self.word_highlight_enabled {
+            return Vec::new();
+        }
+
+        let mut cache = self.word_highlight_cache.borrow_mut();
+        if let Some((cached_cursor, cached_ranges)) = &*cache {
+            if *cached_cursor == self.cursor {
+                return cached_ranges.clone();
+            }
+        }
+
+        let (start, end) = self.code.word_boundaries(self.cursor);
+        if start == end {
+            *cache = Some((self.cursor, Vec::new()));
+            return Vec::new();
+        }
+
+        let word = self.code.slice(start, end);
+        if word.is_empty() {
+            *cache = Some((self.cursor, Vec::new()));
+            return Vec::new();
+        }
+
+        let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+        if !word.chars().next().map_or(false, is_word_char) {
+            *cache = Some((self.cursor, Vec::new()));
+            return Vec::new();
+        }
+
+        let mut ranges = Vec::new();
+        let word_chars: Vec<char> = word.chars().collect();
+        let word_len = word_chars.len();
+        let content = &self.code.content;
+        let total_chars = content.len_chars();
+
+        if total_chars >= word_len {
+            for line_idx in 0..content.len_lines() {
+                let line = content.line(line_idx);
+                let line_len_chars = line.len_chars();
+                if line_len_chars < word_len {
+                    continue;
+                }
+
+                let line_chars: Vec<char> = line.chars().collect();
+                let line_start_char = content.line_to_char(line_idx);
+
+                for i in 0..=(line_chars.len() - word_len) {
+                    if line_chars[i..(i + word_len)] == word_chars {
+                        let prev_ok = i == 0 || !is_word_char(line_chars[i - 1]);
+                        let next_idx = i + word_len;
+                        let next_ok = next_idx >= line_chars.len() || !is_word_char(line_chars[next_idx]);
+                        if prev_ok && next_ok {
+                            ranges.push((line_start_char + i, line_start_char + next_idx));
+                        }
+                    }
+                }
+            }
+        }
+
+        *cache = Some((self.cursor, ranges.clone()));
+        ranges
+    }
+
+    pub fn set_word_highlight_enabled(&mut self, enabled: bool) {
+        self.word_highlight_enabled = enabled;
+        if !enabled {
+            self.word_highlight_cache.borrow_mut().take();
+        }
+    }
+
+    pub fn word_highlight_enabled(&self) -> bool {
+        self.word_highlight_enabled
+    }
+
     pub fn reset_highlight_cache(&mut self) {
         self.highlights_cache.borrow_mut().clear();
         self.line_diff_cache.borrow_mut().clear();
+        self.word_highlight_cache.borrow_mut().take();
         self.rebuild_view();
     }
 
-    pub(crate) fn get_line_diff(
+    pub fn get_line_diff(
         &self,
         orig_idx: usize,
         curr_idx: usize,
@@ -931,22 +1024,5 @@ impl Editor {
             self.original_code.as_ref(),
             self.active_view_mode(),
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_editor_get_line_diff() {
-        let mut editor = Editor::new("rust", "fn main() {\n    let a = 10;\n}", vec![]).unwrap();
-        editor.set_original_code("fn main() {\n    let b = 10;\n}").unwrap();
-
-        let add_highlights = editor.get_line_diff(1, 1, false);
-        assert_eq!(add_highlights, vec![(8, 9)]);
-
-        let del_highlights = editor.get_line_diff(1, 1, true);
-        assert_eq!(del_highlights, vec![(8, 9)]);
     }
 }
