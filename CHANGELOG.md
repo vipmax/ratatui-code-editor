@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.0.6 - 2026-07-07
+
+### Added
+
+- Added optional word highlighting under cursor (`set_word_highlight_enabled`, `word_highlight_enabled`, `word_highlight_ranges`).
+- Added word-level intra-line diff highlighting for added and deleted lines with caching (`diff_added_word`, `diff_deleted_word`).
+- Added list of projects built with this widget in README (mentioning `redai`).
+
+### Changed
+
+- Optimized diff computation by caching line-level diff calculations.
+- Dimmed default diff colors and adjusted contrast for better terminal readability.
+- Refactored diff row building internals to support intra-line changes.
+
 ## 0.0.5 - 2026-06-29
 
 ### Added
