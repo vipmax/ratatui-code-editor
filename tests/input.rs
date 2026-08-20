@@ -45,3 +45,16 @@ fn toggle_fold_at_cursor_toggles_cursor_line_fold() {
     editor.set_cursor(source.find("value").unwrap());
     assert!(editor.get_visible_cursor(&area).is_none());
 }
+
+#[test]
+fn focus_scrolls_horizontally_for_wide_glyph_lines() {
+    let line: String = std::iter::repeat('界').take(20).collect();
+    let mut editor = Editor::new("text", &line, vec![]).unwrap();
+    let area = Rect::new(0, 0, 40, 10);
+
+    editor.set_cursor(line.chars().count());
+    editor.focus(&area);
+
+    assert!(editor.get_offset_x() > 0);
+    assert!(editor.get_visible_cursor(&area).is_some());
+}

@@ -151,16 +151,34 @@ impl Editor {
         let line_number_width = self.get_line_number_width();
 
         let line = self.code.char_to_line(self.cursor);
-        let col = self.cursor - self.code.line_to_char(line);
+        let line_start_char = self.code.line_to_char(line);
+        let line_len = self.code.line_len(line);
+        let col = self.cursor - line_start_char;
 
         let visible_width = width.saturating_sub(line_number_width);
         let visible_height = height;
 
         let step_size = 10;
-        if col < self.offset_x {
-            self.offset_x = col.saturating_sub(step_size);
-        } else if col >= self.offset_x + visible_width {
-            self.offset_x = col.saturating_sub(visible_width.saturating_sub(step_size));
+
+        let visual_col_of = |char_col: usize| -> usize {
+            let slice = self
+                .code
+                .char_slice(line_start_char, line_start_char + char_col.min(line_len));
+            RopeGraphemes::new(&slice).map(grapheme_width).sum()
+        };
+
+        let cursor_visual_col = visual_col_of(col);
+        let offset_visual_col = visual_col_of(self.offset_x);
+
+        if cursor_visual_col < offset_visual_col {
+            let target_visual_col = cursor_visual_col.saturating_sub(step_size);
+            self.offset_x =
+                Self::char_idx_for_visual_col(&self.code, line_start_char, line_len, target_visual_col);
+        } else if cursor_visual_col >= offset_visual_col + visible_width {
+            let target_visual_col =
+                cursor_visual_col.saturating_sub(visible_width.saturating_sub(step_size));
+            self.offset_x =
+                Self::char_idx_for_visual_col(&self.code, line_start_char, line_len, target_visual_col);
         }
 
         let visual_line = self.visual_line_idx(line);
@@ -173,6 +191,28 @@ impl Editor {
         } else if visual_line >= self.offset_y + visible_height {
             self.offset_y = visual_line.saturating_sub(visible_height.saturating_sub(1));
         }
+    }
+
+    /// Finds the char index (relative to `line_start_char`) whose cumulative grapheme
+    /// display width first reaches `target_visual_col`, so it can be assigned to `offset_x`.
+    fn char_idx_for_visual_col(
+        code: &Code,
+        line_start_char: usize,
+        line_len: usize,
+        target_visual_col: usize,
+    ) -> usize {
+        let slice = code.char_slice(line_start_char, line_start_char + line_len);
+        let mut visual_col = 0;
+        let mut char_idx = 0;
+        for g in RopeGraphemes::new(&slice) {
+            if visual_col >= target_visual_col {
+                break;
+            }
+            let (g_width, g_chars) = grapheme_width_and_chars_len(g);
+            visual_col += g_width;
+            char_idx += g_chars;
+        }
+        char_idx
     }
 
     /// Handles a mouse button press at the given cursor position, updating selection and click state.
