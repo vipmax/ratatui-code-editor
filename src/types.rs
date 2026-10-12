@@ -1,5 +1,5 @@
 use ratatui_core::style::Style;
-use std::collections::HashMap;
+use std::{collections::HashMap, error::Error, fmt::Display};
 
 // keyword and ratatui style
 pub type Theme = HashMap<String, Style>;
@@ -99,5 +99,33 @@ impl Default for CodeFoldingOptions {
             enabled: true,
             indicators: FoldIndicators::default(),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct ThemeParseError(String);
+impl ThemeParseError {
+    pub fn new(description: String) -> Self {
+        Self(description)
+    }
+}
+
+impl Display for ThemeParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Error for ThemeParseError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+
+    fn description(&self) -> &str {
+        "description() is deprecated; use Display"
+    }
+
+    fn cause(&self) -> Option<&dyn Error> {
+        self.source()
     }
 }

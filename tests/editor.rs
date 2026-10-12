@@ -32,7 +32,7 @@ fn test_build_theme_bg_fg() {
         ("diff_added", "#017d4e"),
         ("identifier", "#A5FCB6"),
     ];
-    let built = Editor::build_theme(&theme);
+    let built = Editor::build_theme(&theme).unwrap();
     
     let diff_added_style = built.get("diff_added").unwrap();
     assert_eq!(diff_added_style.bg, Some(Color::Rgb(1, 125, 78)));
