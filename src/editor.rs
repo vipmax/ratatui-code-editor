@@ -4,15 +4,17 @@ use crate::code::Code;
 use crate::code::{EditBatch, Operation};
 use crate::code::{RopeGraphemes, grapheme_width, grapheme_width_and_chars_len};
 use crate::selection::{Selection, SelectionSnap};
-use crate::types::{CodeFoldingOptions, DiffOptions, HightlightCache, Theme, VisualRow, LineDiffCache};
+use crate::types::{CodeFoldingOptions, DiffOptions, HightlightCache, LineDiffCache, Theme, ThemeParseError, VisualRow};
 use crate::utils;
 use crate::view::{View, ViewMode};
 use anyhow::{Result, anyhow};
+// use ratatui_core::style::ParseColorError;
 use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Style};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::time::Duration;
 use unicode_width::UnicodeWidthStr;
 
@@ -97,7 +99,7 @@ impl Editor {
         let code = Code::new(text, lang, custom_highlights.clone())
             .or_else(|_| Code::new(text, "text", custom_highlights))?;
 
-        let theme = Self::build_theme(&theme);
+        let theme = Self::build_theme(&theme)?;
         let highlights_cache = RefCell::new(HashMap::new());
         let line_diff_cache = RefCell::new(HashMap::new());
         let view = View::new(&code, ViewMode::Plain);
@@ -607,12 +609,16 @@ impl Editor {
         }
     }
 
-    pub fn build_theme(theme: &Vec<(&str, &str)>) -> Theme {
+    pub fn build_theme(theme: &Vec<(&str, &str)>) -> Result<Theme, ThemeParseError> {
         theme
             .into_iter()
             .map(|(name, hex)| {
-                let (r, g, b) = utils::rgb(hex);
-                let color = Color::Rgb(r, g, b);
+                let color = match Color::from_str(hex) {
+                    Ok(c) => c,
+                    Err(_) => return Err(ThemeParseError::new(
+                        format!("Invalid color '{}' at '{}'", hex, name)
+                    )),
+                };
                 let style = match *name {
                     "diff_added"
                     | "diff_added_word"
@@ -621,7 +627,7 @@ impl Editor {
                     | "word_highlight" => Style::default().bg(color),
                     _ => Style::default().fg(color),
                 };
-                (name.to_string(), style)
+                Ok((name.to_string(), style))
             })
             .collect()
     }
